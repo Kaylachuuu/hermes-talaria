@@ -1,0 +1,7 @@
+{
+  "name": "talaria",
+  "label": "Talaria",
+  "description": "Routes for Talaria devices: hello, claim, result.",
+  "api": "plugin_api.py",
+  "tab": { "hidden": true }
+}
