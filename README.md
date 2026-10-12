@@ -4,7 +4,8 @@ Hands for Hermes on the device in front of you. Athena runs on one server. When 
 writes or runs something, Talaria does it on a named device of yours (by default the one you are
 talking to her from) and never on the server.
 
-Named after Hermes' winged sandals. Status: **first one-device test**, not for daily use yet.
+Named after Hermes' winged sandals. Status: **early testing.** Tried on a Mac (zsh) and Windows (PowerShell) device against one
+backend, including one device reached from the other. Not for daily use yet.
 
 ## How it works
 
@@ -43,8 +44,22 @@ Hermes and Hermes Desktop running on the same PC is the simplest setup.
    per line. The status line should say "Online as …".
 5. Ask Athena to call `talaria_devices`, then for example to list one of those folders.
 
-With a remote backend, the device half is installed per device through **Install from Git** with
-the Desktop target checked. That path has not been tried yet.
+**Every device must use the same backend.** Device presence lives in the backend's memory. A Desktop
+that runs its own built-in backend reports to that one, and other devices see it as offline. On
+the machine that hosts Hermes, point Desktop at the shared dashboard too (Settings → Gateways →
+Remote gateway).
+
+With a remote backend, Desktop cannot copy the device half from the server's disk. Copy
+`talaria/desktop/plugin.js` into `<Hermes home>/desktop-plugins/talaria/` on each device (on
+Windows `%LOCALAPPDATA%\hermes`, on a Mac `~/.hermes`), then press **Rescan** in Capabilities →
+Plugins. Repeat after an update that changes `plugin.js`. **Install from Git** with the Desktop
+target checked should also work, but has not been tried.
+
+**Tell the agent to use it.** A capable model picks Talaria from the tool descriptions, but on the
+machine that hosts Hermes the built-in file and terminal tools also reach the same disk and can
+look right. One line in the agent's standing instructions settles it, for example: "Anything on my
+own computers (files, folders, commands) goes through the talaria_* tools. The terminal and file
+tools act only on the server."
 
 ## What is not done yet
 
