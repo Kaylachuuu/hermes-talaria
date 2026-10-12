@@ -10,9 +10,11 @@
     3. On the machine that hosts Hermes (it has the "Hermes Dashboard" scheduled task), restarts the
        dashboard so the server half reloads. The server half is linked to the checkout, so the pull
        already updated its files. A laptop without that task skips this step.
+    4. If the background helper is installed, refreshes its copy and restarts it.
 
     -Install also copies this script to $HOME\bin and puts that folder on your PATH, so
-    "sync-talaria" works from any PowerShell window opened afterwards.
+    "sync-talaria" works from any PowerShell window opened afterwards, along with a
+    "talaria-helper" command for the background helper.
 
 .EXAMPLE
     .\sync-talaria.ps1 -Install
@@ -53,6 +55,10 @@ if ($Install) {
         Write-Host "Added $bin to your PATH. Open a new PowerShell window to use sync-talaria."
     }
     Write-Host "Installed as $(Join-Path $bin 'sync-talaria.ps1')"
+    # A talaria-helper command too, running the helper from the checkout (for setup, status and so on).
+    $helperScript = [IO.Path]::Combine($project, "helper", "talaria-helper.mjs")
+    Set-Content -Path (Join-Path $bin "talaria-helper.cmd") -Value "@node `"$helperScript`" %*" -Encoding ASCII
+    Write-Host "Installed as $(Join-Path $bin 'talaria-helper.cmd')"
 }
 
 # 1. The checkout
@@ -97,4 +103,15 @@ if ((Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) -and
         Start-ScheduledTask -TaskName $task
         Write-Host "Restarted the dashboard so the server half reloads."
     }
+}
+
+# 4. The background helper, if it was installed: it runs from its own copy, so refresh and restart it.
+$helperSource = [IO.Path]::Combine($project, "helper", "talaria-helper.mjs")
+$helperHome = if ($env:TALARIA_HELPER_HOME) { $env:TALARIA_HELPER_HOME } else { Join-Path ([string]$env:APPDATA) "Talaria" }
+$helperCopy = Join-Path $helperHome "talaria-helper.mjs"
+if ((Test-Path $helperCopy) -and (Test-Path $helperSource) -and
+    ((Get-FileHash $helperSource).Hash -ne (Get-FileHash $helperCopy).Hash)) {
+    & node $helperSource install | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "could not update the background helper (node `"$helperSource`" install)" }
+    Write-Host "Background helper updated and restarted."
 }

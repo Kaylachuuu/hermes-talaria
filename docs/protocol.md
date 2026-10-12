@@ -14,7 +14,9 @@ The server binds a name to the first key that claims it and keeps the binding in
 `talaria/devices.json` in the root Hermes home (shared by every profile the backend serves). `/talaria forget <name>` releases it. A new key is enrolled as
 unapproved: it may say hello, but the server sends it no work and does not offer it as a default until
 the user types `/talaria approve <name> [key fingerprint]`. Devices enrolled before approval existed
-are treated as approved. `/talaria revoke <name>` removes a device and lists its id under
+are treated as approved. A new key may ask for a name another key already holds (the background helper
+taking over from the Desktop app); it waits unapproved while the old key keeps the name, and approving
+it with its fingerprint replaces the old key. `/talaria revoke <name>` removes a device and lists its id under
 `revoked` in the same file; every envelope from a revoked id is refused, hello included.
 
 ## Envelopes
@@ -76,3 +78,10 @@ device stops the command.
 
 Paths are absolute paths on the device. Before doing anything, the device checks them against its
 allowed folders after normalising `.` and `..`. Windows paths are compared case-insensitively.
+
+## The background helper's local port
+
+The helper also listens on `127.0.0.1:47219` for Hermes Desktop on the same machine. `GET /status`
+returns `{name, key, status, version}`. `POST /sessions` with `{sessions: [{session_id, at}]}` hands it
+the chats the app shows, which it reports in its own `hello`. Requests whose `Host` is not loopback, or
+whose `Origin` is an `http(s)` site other than localhost, are refused.

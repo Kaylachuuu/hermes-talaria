@@ -1,12 +1,14 @@
 #!/bin/bash
 # Bring Talaria up to date on a Mac whose Hermes Desktop connects to a remote backend: pull
-# hermes-talaria into ~/Documents/Github Repos/hermes/talaria (cloning it if missing), then copy the device half
-# into Hermes Desktop's plugin folder. The backend half lives on the server and is not touched.
+# hermes-talaria into ~/Documents/Github Repos/hermes/talaria (cloning it if missing), copy the device half
+# into Hermes Desktop's plugin folder, and refresh the background helper if it is installed. The backend
+# half lives on the server and is not touched.
 #
 #   sync-talaria                       from main
 #   sync-talaria claude/project-thread-ekvwk9
 #                                      a branch that is not merged yet
-#   sync-talaria --install             also put this script on your PATH as sync-talaria
+#   sync-talaria --install             also put this script on your PATH as sync-talaria, and the
+#                                      helper as talaria-helper
 #
 # A checkout with changes that are not committed is left alone, so nothing of yours is overwritten.
 
@@ -18,7 +20,7 @@ BRANCH="main"
 for arg in "$@"; do
     case "$arg" in
         --install) INSTALL=1 ;;
-        -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) BRANCH="$arg" ;;
     esac
 done
@@ -43,6 +45,15 @@ fi
 FOLDER="$ROOT/hermes/talaria"
 [ ! -d "$FOLDER" ] && [ -d "$ROOT/hermes-talaria/.git" ] && FOLDER="$ROOT/hermes-talaria"
 mkdir -p "$(dirname "$FOLDER")"
+
+if [ -n "$INSTALL" ]; then
+    # A talaria-helper command too, running the helper from this checkout (for setup, status and so on).
+    printf '#!/bin/sh\nexec node "%s/helper/talaria-helper.mjs" "$@"\n' "$FOLDER" > "$BIN/talaria-helper.tmp" 2>/dev/null ||
+        printf '#!/bin/sh\nexec node "%s/helper/talaria-helper.mjs" "$@"\n' "$FOLDER" | sudo tee "$BIN/talaria-helper.tmp" >/dev/null
+    { chmod 755 "$BIN/talaria-helper.tmp" && mv "$BIN/talaria-helper.tmp" "$BIN/talaria-helper"; } 2>/dev/null ||
+        sudo sh -c "chmod 755 '$BIN/talaria-helper.tmp' && mv '$BIN/talaria-helper.tmp' '$BIN/talaria-helper'"
+    echo "Installed as $BIN/talaria-helper"
+fi
 
 echo "== talaria ($BRANCH)"
 if [ -d "$FOLDER/.git" ]; then
@@ -75,4 +86,16 @@ else
     mkdir -p "$TARGET" && cp "$SOURCE" "$TARGET/plugin.js" || { echo "Stopped: could not copy to $TARGET."; exit 1; }
     echo "Desktop plugin updated in $TARGET."
     echo "In Hermes Desktop, press Rescan in Capabilities > Plugins (or restart the app) to load it."
+fi
+
+# The background helper, if it was installed: it runs from its own copy, so refresh and restart it.
+HELPER_SRC="$FOLDER/helper/talaria-helper.mjs"
+HELPER_COPY="${TALARIA_HELPER_HOME:-$HOME/Library/Application Support/Talaria}/talaria-helper.mjs"
+if [ -f "$HELPER_COPY" ] && [ -f "$HELPER_SRC" ] && ! cmp -s "$HELPER_SRC" "$HELPER_COPY"; then
+    if command -v node >/dev/null && node "$HELPER_SRC" install >/dev/null; then
+        echo "Background helper updated and restarted."
+    else
+        echo "Stopped: could not update the background helper (node \"$HELPER_SRC\" install)."
+        exit 1
+    fi
 fi

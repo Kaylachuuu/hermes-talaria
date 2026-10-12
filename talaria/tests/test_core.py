@@ -48,7 +48,7 @@ class FakeDevice:
         payload.update(extra)
         reply = t.hello(self.envelope("hello", payload, with_key=True))
         if approve and not reply["approved"]:
-            t.store.approve(self.name)
+            t.store.approve(self.name, self.device_id[:8])
             reply["approved"] = True
         return reply
 
@@ -69,10 +69,19 @@ def test_hello_enrolls_and_persists(t, tmp_path):
     assert again.by_name("desk").device_id == d.device_id
 
 
-def test_name_is_bound_to_first_key(t):
-    FakeDevice("desk").hello(t)
-    with pytest.raises(core.EnvelopeError, match="belongs to another device"):
-        FakeDevice("desk").hello(t)
+def test_a_new_key_for_a_taken_name_waits_until_approved_by_key(t):
+    old, new = FakeDevice("desk"), FakeDevice("desk")
+    old.hello(t, sessions=["s1"])
+    assert new.hello(t, approve=False)["approved"] is False
+    # The old key keeps the name and the work until the new one is approved by its key.
+    assert t.store.by_name("desk").device_id == old.device_id
+    assert t.resolve_device("desk", []).device_id == old.device_id
+    with pytest.raises(core.TalariaError, match="name the key"):
+        t.store.approve("desk")
+    approved, replaced = t.store.approve("desk", new.device_id[:8])
+    assert (approved.device_id, replaced.device_id) == (new.device_id, old.device_id)
+    assert t.store.by_name("desk").device_id == new.device_id
+    assert t.store.get(old.device_id) is None
 
 
 def test_forget_frees_the_name(t):

@@ -14,6 +14,8 @@ const PROTOCOL = 'talaria/1'
 const HELLO_EVERY_MS = 5_000
 const MAX_OUTPUT_CHARS = 100_000
 const MAX_LIST_ENTRIES = 1000
+// The background helper (helper/talaria-helper.mjs) listens here when it runs on this machine.
+const HELPER_URL = 'http://127.0.0.1:47219'
 
 // ------------------------------------------------------------------ paths and folder rules
 
@@ -390,8 +392,20 @@ function defaultName(win) {
   return win ? 'windows-desktop' : 'this-device'
 }
 
+// The helper's status if it is running on this machine, else null.
+export async function probeHelper(fetchFn = globalThis.fetch) {
+  try {
+    const res = await fetchFn(`${HELPER_URL}/status`, { signal: AbortSignal.timeout(800) })
+
+    return res.ok ? await res.json() : null
+  } catch {
+    return null
+  }
+}
+
 function Settings({ ctx, status }) {
   const win = isWindowsPlatform()
+  const [useHelper, setUseHelper] = useState(() => ctx.storage.get('useHelper', true))
   const [name, setName] = useState(() => ctx.storage.get('name', defaultName(win)))
   const [roots, setRoots] = useState(() => ctx.storage.get('roots', ''))
   const saved = parseRoots(roots, win)
@@ -400,6 +414,31 @@ function Settings({ ctx, status }) {
   return jsxs('div', {
     className: 'flex max-w-xl flex-col gap-4 p-4 text-sm',
     children: [
+      jsxs('label', {
+        className: 'flex flex-col gap-1',
+        children: [
+          jsxs('span', {
+            className: 'flex items-center gap-2 font-medium',
+            children: [
+              jsx('input', {
+                checked: useHelper,
+                onChange: e => {
+                  setUseHelper(e.target.checked)
+                  ctx.storage.set('useHelper', e.target.checked)
+                },
+                type: 'checkbox'
+              }),
+              'Use the background helper when it runs on this machine'
+            ]
+          }),
+          jsx('span', {
+            className: 'text-(--ui-text-tertiary)',
+            children:
+              'The helper keeps this machine reachable with the app closed, and its own name and folders apply. ' +
+              'The app then only tells it which chats you have open here. Off: the app does the work itself, with the settings below.'
+          })
+        ]
+      }),
       jsxs('label', {
         className: 'flex flex-col gap-1',
         children: [
@@ -500,6 +539,24 @@ export default {
     const hello = async () => {
       if (disposed || !identity) {
         return
+      }
+
+      // With the helper running, it is this machine's device: hand it the chats shown here instead.
+      if (ctx.storage.get('useHelper', true)) {
+        const helper = await probeHelper()
+
+        if (helper) {
+          const claims = [...sessions.entries()].map(([session_id, at]) => ({ at, session_id }))
+
+          await fetch(`${HELPER_URL}/sessions`, {
+            body: JSON.stringify({ sessions: claims }),
+            headers: { 'content-type': 'application/json' },
+            method: 'POST'
+          }).catch(() => {})
+          lastStatus = `Using the background helper. ${helper.status}`
+
+          return
+        }
       }
 
       try {

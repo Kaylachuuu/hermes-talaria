@@ -156,9 +156,17 @@ class DeviceStore:
             return self._devices.get(device_id)
 
     def by_name(self, name: str) -> Optional[Device]:
+        """The approved device with this name, else the newest key waiting for it."""
+        named = self.named(name)
+        approved = [d for d in named if d.approved]
+        if approved:
+            return approved[0]
+        return max(named, key=lambda d: d.enrolled_at) if named else None
+
+    def named(self, name: str) -> list[Device]:
         key = name.strip().lower()
         with self._lock:
-            return next((d for d in self._devices.values() if d.name == key), None)
+            return [d for d in self._devices.values() if d.name == key]
 
     def all(self) -> list[Device]:
         with self._lock:
@@ -181,27 +189,46 @@ class DeviceStore:
                     existing.name = name
                     self._save()
                 return existing
-            taken = self.by_name(name)
-            if taken is not None:
-                raise EnvelopeError(f"the name {name!r} belongs to another device; "
-                                    f"forget it first with /talaria forget {name}")
+            # A new key may ask for a name that is already taken, e.g. the background helper taking
+            # over from the Desktop app. It waits unapproved; approving it with its key replaces the
+            # old holder (approve()). Until then the old holder keeps the name.
             device = Device(device_id, name, public_key, now)
             self._devices[device_id] = device
             self._save()
             return device
 
-    def approve(self, name: str, fingerprint: str = "") -> Device:
-        """Approve a waiting device. With a fingerprint, it must match the one shown on the device."""
+    def approve(self, name: str, fingerprint: str = "") -> tuple[Device, Optional[Device]]:
+        """Approve a waiting key for a name; returns (approved, replaced). With a fingerprint, the
+        key must match the one shown on the device. Replacing an approved device's key, or choosing
+        between several waiting keys, needs the fingerprint."""
+        fingerprint = fingerprint.strip().lower()
         with self._lock:
-            device = self.by_name(name)
-            if device is None:
+            named = self.named(name)
+            if not named:
                 raise TalariaError(f"no device named {name!r}")
-            if fingerprint and not device.device_id.startswith(fingerprint.strip().lower()):
-                raise TalariaError(f"{device.name} has key {device.device_id[:8]}, not {fingerprint}; "
-                                   "not approved")
+            holder = next((d for d in named if d.approved), None)
+            waiting = [d for d in named if not d.approved]
+            if fingerprint:
+                if holder is not None and holder.device_id.startswith(fingerprint):
+                    return holder, None
+                match = [d for d in waiting if d.device_id.startswith(fingerprint)]
+                if not match:
+                    keys = ", ".join(d.device_id[:8] for d in waiting) or "none"
+                    raise TalariaError(f"no key {fingerprint} is waiting for {name!r} (waiting: {keys}); "
+                                       "not approved")
+                device = match[0]
+            else:
+                if not waiting:
+                    return holder, None
+                if holder is not None or len(waiting) > 1:
+                    raise TalariaError(f"to give {name!r} to a new key, name the key shown on that "
+                                       f"device: /talaria approve {name} <key>")
+                device = waiting[0]
             device.approved = True
+            if holder is not None:
+                del self._devices[holder.device_id]
             self._save()
-            return device
+            return device, holder
 
     def is_revoked(self, device_id: str) -> bool:
         with self._lock:
@@ -220,13 +247,14 @@ class DeviceStore:
             return device
 
     def forget(self, name: str) -> bool:
+        """Remove every key holding or waiting for this name."""
         with self._lock:
-            device = self.by_name(name)
-            if device is None:
-                return False
-            del self._devices[device.device_id]
-            self._save()
-            return True
+            named = self.named(name)
+            for device in named:
+                del self._devices[device.device_id]
+            if named:
+                self._save()
+            return bool(named)
 
 
 # --------------------------------------------------------------------------- broker

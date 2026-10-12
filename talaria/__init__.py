@@ -132,18 +132,23 @@ def _slash(raw: str) -> str:
                 "it is saved on that device too.")
     if parts[:1] == ["approve"] and len(parts) in (2, 3):
         try:
-            device = talaria.store.approve(parts[1], parts[2] if len(parts) == 3 else "")
+            device, replaced = talaria.store.approve(parts[1], parts[2] if len(parts) == 3 else "")
         except core.TalariaError as exc:
             return str(exc)
+        if replaced is not None:
+            talaria.cancel_device(replaced.device_id)
+            return (f"Approved {device.name} (key {device.device_id[:8]}); it replaces the old key "
+                    f"{replaced.device_id[:8]}.")
         return f"Approved {device.name} (key {device.device_id[:8]})."
     now = talaria.clock()
     lines = [f"{d.name}  {'online' if d.online(now) else 'offline'}"
              f"{'' if d.approved else '  WAITING FOR APPROVAL'}  key {d.device_id[:8]}  "
              f"folders: {', '.join(d.roots) or 'none'}"
              for d in talaria.store.all()]
-    waiting = [d.name for d in talaria.store.all() if not d.approved]
+    waiting = [d for d in talaria.store.all() if not d.approved]
     if waiting:
-        lines.append(f"Check the key shown on the device, then: /talaria approve {waiting[0]} <key>")
+        lines.append(f"Check the key shown on the device, then: "
+                     f"/talaria approve {waiting[0].name} {waiting[0].device_id[:8]}")
     return "\n".join(lines) or "No devices enrolled yet."
 
 

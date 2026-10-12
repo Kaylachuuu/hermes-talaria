@@ -105,3 +105,110 @@ def test_system_prompt_points_the_agent_at_talaria(hermes):
     from hermes_cli.plugins import get_plugin_manager
     section = get_plugin_manager()._system_prompt_sections.get("talaria.devices")
     assert section is not None and "talaria_*" in section.content
+
+
+# ---------------------------------------------------------------- the background helper, for real
+
+HELPER = Path(__file__).resolve().parents[2] / "helper" / "talaria-helper.mjs"
+
+
+def _free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="module")
+def helper(hermes, tmp_path_factory):
+    """The real helper process, talking HTTP to a real dashboard server on a free port."""
+    import json
+    import subprocess
+    import urllib.request
+    import uvicorn
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    from hermes_cli import web_server
+    port, local_port = _free_port(), _free_port()
+    server = uvicorn.Server(uvicorn.Config(web_server.app, host="127.0.0.1", port=port,
+                                           lifespan="off", log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+    while not server.started:
+        time.sleep(0.05)
+    home = tmp_path_factory.mktemp("helper_home")
+    allowed = tmp_path_factory.mktemp("allowed")
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "secret.txt").write_text("not yours")
+    (allowed / "escape.txt").symlink_to(outside / "secret.txt")
+    (allowed / "escape-dir").symlink_to(outside)
+    (home / "config.json").write_text(json.dumps({
+        "server": f"http://127.0.0.1:{port}", "name": "itest-helper", "folders": [str(allowed)],
+        "local_port": local_port}))
+    (home / "secrets.json").write_text(json.dumps({"token": "test-token"}))
+    env = dict(os.environ, TALARIA_HELPER_HOME=str(home), TALARIA_HELPER_SECRETS="file",
+               SHELL="/bin/sh")
+    proc = subprocess.Popen(["node", str(HELPER), "run"], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    yield {"allowed": allowed, "outside": outside, "local": f"http://127.0.0.1:{local_port}",
+           "urlopen": urllib.request.urlopen, "Request": urllib.request.Request}
+    proc.terminate()
+    server.should_exit = True
+
+
+def _wait_for(predicate, what):
+    for _ in range(100):
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.1)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def test_helper_enrolls_waits_for_approval_and_does_the_work(hermes, helper):
+    import json
+    from hermes_cli.plugins import get_plugin_command_handler
+    _, registry = hermes
+    talaria = __import__("sys").modules["hermes_talaria_core"].shared()
+    device = _wait_for(lambda: talaria.store.by_name("itest-helper"), "the helper's hello")
+    assert device.approved is False and device.shell == "sh"
+    call = lambda tool, **args: json.loads(registry.get_entry(tool).handler(
+        {**args, "device": "itest-helper"}))
+    assert "waiting for approval" in call("talaria_list", path=str(helper["allowed"]))["error"]
+    command = get_plugin_command_handler("talaria")
+    assert command(f"approve itest-helper {device.device_id[:8]}").startswith("Approved")
+
+    allowed = helper["allowed"]
+    assert call("talaria_write", path=f"{allowed}/hi.txt", content="hello")["result"]["written"]
+    assert call("talaria_read", path=f"{allowed}/hi.txt")["result"]["text"] == "hello"
+    names = {e["name"] for e in call("talaria_list", path=str(allowed))["result"]["entries"]}
+    assert {"hi.txt", "escape.txt"} <= names
+    run = call("talaria_run", command="pwd; echo out; exit 3", cwd=str(allowed))["result"]
+    assert run["exit_code"] == 3 and run["output"].endswith("out") and not run["timed_out"]
+
+    # Symlinks that lead outside the allowed folder are refused, for every operation.
+    for tool, args in (("talaria_read", {"path": f"{allowed}/escape.txt"}),
+                       ("talaria_write", {"path": f"{allowed}/escape.txt", "content": "x"}),
+                       ("talaria_write", {"path": f"{allowed}/escape-dir/new.txt", "content": "x"}),
+                       ("talaria_list", {"path": f"{allowed}/escape-dir"}),
+                       ("talaria_run", {"command": "true", "cwd": f"{allowed}/escape-dir"})):
+        assert "resolves outside" in call(tool, **args)["error"], (tool, args)
+    assert (helper["outside"] / "secret.txt").read_text() == "not yours"
+    assert not (helper["outside"] / "new.txt").exists()
+
+
+def test_desktop_hands_the_helper_its_chats_and_web_pages_are_refused(hermes, helper):
+    import json
+    import urllib.error
+    talaria = __import__("sys").modules["hermes_talaria_core"].shared()
+    _wait_for(lambda: talaria.store.by_name("itest-helper"), "the helper's hello")
+    body = json.dumps({"sessions": [{"session_id": "chat-1", "at": int(time.time() * 1000)}]}).encode()
+    req = helper["Request"](f"{helper['local']}/sessions", data=body, method="POST",
+                            headers={"content-type": "application/json", "origin": "file://"})
+    assert json.loads(helper["urlopen"](req).read()) == {"ok": True}
+    _wait_for(lambda: "chat-1" in talaria.store.by_name("itest-helper").sessions, "the chat claim")
+    status = json.loads(helper["urlopen"](f"{helper['local']}/status").read())
+    assert status["name"] == "itest-helper"
+    evil = helper["Request"](f"{helper['local']}/status", headers={"origin": "https://example.com"})
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        helper["urlopen"](evil)
+    assert caught.value.code == 403

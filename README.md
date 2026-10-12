@@ -4,8 +4,9 @@ Hands for Hermes on the device in front of you. Athena runs on one server. When 
 writes or runs something, Talaria does it on a named device of yours (by default the one you are
 talking to her from) and never on the server.
 
-Named after Hermes' winged sandals. Status: **early testing.** Tried on a Mac (zsh) and Windows (PowerShell) device against one
-backend, including one device reached from the other. Not for daily use yet.
+Named after Hermes' winged sandals. Status: **early testing.** The Desktop plugin is tried on a Mac (zsh) and Windows (PowerShell)
+against one backend, including one device reached from the other. The background helper is new and
+tested only in the automated tests so far. Not for daily use yet.
 
 ## How it works
 
@@ -14,8 +15,12 @@ One installable Hermes plugin, `talaria/`, with two halves:
 - **The agent half** (`talaria/__init__.py`, `talaria/core.py`) adds the tools `talaria_devices`,
   `talaria_list`, `talaria_read`, `talaria_write` and `talaria_run`, plus a `/talaria` command. It also
   keeps the device registry.
-- **The device half** (`talaria/desktop/plugin.js`) is a stock Hermes Desktop plugin. It needs no
-  modified app. It does the work through the app's own native bridge, so the app has to be open.
+- **The device half** comes in two forms that speak the same protocol:
+  - `talaria/desktop/plugin.js`, a stock Hermes Desktop plugin. It needs no modified app and does the
+    work through the app's own native bridge, so the app has to be open.
+  - `helper/talaria-helper.mjs`, a background helper (Node 18 or later, no other dependencies). It
+    keeps the machine reachable with the app closed. When both run on one machine, the app hands
+    the helper the chats it shows and stops doing the work itself (a switch in its settings).
 
 They talk through the plugin's routes on the dashboard (`/api/plugins/talaria/…`), which sit behind
 the dashboard's login. Each device has its own Ed25519 key, and every call it makes is signed. The
@@ -56,6 +61,31 @@ Windows `%LOCALAPPDATA%\hermes`, on a Mac `~/.hermes`), then press **Rescan** in
 Plugins. Repeat after an update that changes `plugin.js`. **Install from Git** with the Desktop
 target checked should also work, but has not been tried.
 
+## The background helper
+
+```
+talaria-helper setup        # dashboard address, sign-in, device name, allowed folders
+talaria-helper install      # run in the background at every login
+talaria-helper status
+talaria-helper folders add <path>    # or: remove <path>; read again within seconds
+```
+
+- **Sign-in.** It signs in once with the dashboard's username and password and keeps only the
+  session the dashboard hands back, which it renews by itself (30 days without contact ends it;
+  then run `talaria-helper login`). The password is not stored.
+- **Secrets.** The device key and that session are kept in the login keychain on a Mac, protected by
+  the Windows account (DPAPI) on Windows, and in a file only the user can read elsewhere.
+- **Background.** A LaunchAgent on a Mac, the per-user Run key on Windows (no administrator rights),
+  a systemd user service on Linux. It runs from a copy in its settings folder, which the sync
+  scripts refresh.
+- **Taking over from the app.** The helper is a new key. If it asks for a name the app already
+  holds, the app keeps that name until you approve the helper with its key
+  (`/talaria approve <name> <key>`); the helper then replaces the app's key for that name.
+- **Folders.** Its own list, in its `config.json`. Every path is checked again after resolving
+  symlinks, so a link inside an allowed folder cannot lead out of it, for any operation.
+- **Local port.** It listens on 127.0.0.1:47219 for the Desktop app only (status, and which chats
+  are open). Requests from web pages are refused.
+
 **Steering the agent.** On the machine that hosts Hermes, the built-in file and terminal tools reach
 the same disk as Talaria and can look right. So Talaria also adds a short section to each new
 session's system prompt: the user's devices are reached only through `talaria_*`. Hermes builds
@@ -63,9 +93,10 @@ without plugin prompt sections skip it; there, put the same line in the agent's 
 instructions.
 
 **Updating.** `scripts/sync-talaria.sh` (Mac) and `scripts/sync-talaria.ps1` (Windows) pull the
-checkout and copy the device half into Desktop's plugin folder. On the Windows machine that runs the
-dashboard as the "Hermes Dashboard" scheduled task, the PowerShell one restarts it too. Run either
-once with `--install` / `-Install` to put it on the PATH as `sync-talaria`.
+checkout, copy the device half into Desktop's plugin folder, and refresh and restart the background
+helper if it is installed. On the Windows machine that runs the dashboard as the "Hermes Dashboard"
+scheduled task, the PowerShell one restarts it too. Run either once with `--install` / `-Install` to
+put `sync-talaria` and `talaria-helper` on the PATH.
 
 **Several agents.** Every agent on one backend uses the same devices: helper agents the main agent
 spawns inherit its Talaria tools and its default device, and each Hermes profile on the backend sees
@@ -80,15 +111,16 @@ such as one agent allowed only one device.
   Approval happens only through that command, never through a tool, so the agent cannot approve.
 - If a device is lost, `/talaria revoke <name>` refuses its key from then on and frees its name. The
   lost device also holds the dashboard login, so change the dashboard password too.
-- The private key is kept in the plugin's storage in the app, not in the OS keychain.
-- Write and run cannot detect a symlink that leads out of an allowed folder. List and read check the
-  resolved path.
+- In the Desktop app, the private key is kept in the plugin's storage, not in the OS keychain, and
+  write and run cannot detect a symlink that leads out of an allowed folder (list and read check the
+  resolved path). The background helper has neither gap.
 - Commands run in the device's own shell: zsh/bash/sh/fish, or PowerShell on Windows. `cmd.exe` is
   refused. A command that reads from the terminal will wait until its timeout.
 - Hermes' own `terminal` and file tools are not rerouted yet; Talaria has its own tools.
 - Not supported: `dashboard.turn_isolation`, `plugins.isolation: host`, and Desktop connected to its
   backend over SSH (refused, since its terminal would run on the server).
-- No standalone helper yet, so the app has to be open.
+- The background helper runs while you are logged in to the machine, not before.
+- A server-side cancel does not reach the background helper; it stops a command at its own timeout.
 - One person. Hermes has no user accounts, so any chat can name any device. If that changes, the
   likely path is one Hermes profile per person, each with its own device list.
 
@@ -100,13 +132,16 @@ talaria/                 the plugin (install this folder)
   __init__.py            tools and /talaria
   core.py                devices, signatures, broker
   dashboard/             routes under /api/plugins/talaria/
-  desktop/plugin.js      the device half
+  desktop/plugin.js      the device half, in Hermes Desktop
   tests/                 pytest (Python) and node:test (JS)
+helper/talaria-helper.mjs  the device half, as a background helper
+scripts/                 sync-talaria for Mac and Windows
 docs/protocol.md
 ```
 
 Tests: `python -m pytest talaria/tests` (needs Hermes' Python environment for `cryptography`), and
-`node --import ./talaria/tests/js/register.mjs --test talaria/tests/js/plugin.test.mjs`.
+`node --import ./talaria/tests/js/register.mjs --test talaria/tests/js/plugin.test.mjs talaria/tests/js/helper.test.mjs`.
+The Python tests also run the real helper against a real dashboard server when `node` is installed.
 
 ## License
 
