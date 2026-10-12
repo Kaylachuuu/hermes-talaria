@@ -50,7 +50,14 @@ def test_routes_need_the_dashboard_login(hermes):
 def test_tool_call_reaches_the_device_and_back(hermes):
     client, registry = hermes
     device = FakeDevice("itest-box")
-    _hello(client, device)
+    assert _hello(client, device)["approved"] is False
+    # A new device is sent nothing until the user approves it with the slash command.
+    waiting = registry.get_entry("talaria_read").handler({"path": "/tmp/x.txt", "device": "itest-box"})
+    assert "waiting for approval" in waiting
+    from hermes_cli.plugins import get_plugin_command_handler
+    approve = get_plugin_command_handler("talaria")
+    assert "WAITING FOR APPROVAL" in approve("")
+    assert approve(f"approve itest-box {device.device_id[:8]}").startswith("Approved itest-box")
     out = {}
     worker = threading.Thread(target=lambda: out.setdefault(
         "r", registry.get_entry("talaria_read").handler({"path": "/tmp/x.txt", "device": "itest-box"})))

@@ -95,6 +95,8 @@ class Device:
     name: str
     public_key: str  # base64 raw Ed25519 key
     enrolled_at: float
+    # A new key waits for the user's `/talaria approve <name>` before it is sent any work.
+    approved: bool = False
     # Presence, never persisted.
     last_seen: float = 0.0
     platform: str = ""
@@ -106,10 +108,13 @@ class Device:
     def online(self, now: float) -> bool:
         return now - self.last_seen < ONLINE_WINDOW_S
 
+    def usable(self, now: float) -> bool:
+        return self.approved and self.online(now)
+
     def public(self, now: float) -> dict:
         return {"name": self.name, "device_id": self.device_id, "online": self.online(now),
-                "platform": self.platform, "shell": self.shell, "allowed_folders": list(self.roots),
-                "fingerprint": self.device_id[:8]}
+                "approved": self.approved, "platform": self.platform, "shell": self.shell,
+                "allowed_folders": list(self.roots), "fingerprint": self.device_id[:8]}
 
 
 class DeviceStore:
@@ -126,14 +131,16 @@ class DeviceStore:
             return
         data = json.loads(self.path.read_text(encoding="utf-8") or "{}")
         for row in data.get("devices", []):
-            device = Device(row["device_id"], row["name"], row["public_key"], row["enrolled_at"])
+            # Rows from before approval existed were trusted on first use; keep them working.
+            device = Device(row["device_id"], row["name"], row["public_key"], row["enrolled_at"],
+                            approved=bool(row.get("approved", True)))
             self._devices[device.device_id] = device
 
     def _save(self) -> None:
         if self.path is None:
             return
         rows = [{"device_id": d.device_id, "name": d.name, "public_key": d.public_key,
-                 "enrolled_at": d.enrolled_at} for d in self._devices.values()]
+                 "enrolled_at": d.enrolled_at, "approved": d.approved} for d in self._devices.values()]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"devices": rows}, indent=2), encoding="utf-8")
@@ -153,7 +160,8 @@ class DeviceStore:
             return sorted(self._devices.values(), key=lambda d: d.name)
 
     def enroll(self, public_key: str, name: str, now: float) -> Device:
-        """Trust on first use: a name is bound to the first key that claims it, until forgotten."""
+        """A name is bound to the first key that claims it, until forgotten. A new key starts out
+        unapproved: it can say hello, but is sent no work until the user approves it."""
         name = name.strip().lower()
         if not _NAME_RE.match(name):
             raise EnvelopeError("device name must be 1-32 lowercase letters, digits or dashes")
@@ -174,6 +182,19 @@ class DeviceStore:
                                     f"forget it first with /talaria forget {name}")
             device = Device(device_id, name, public_key, now)
             self._devices[device_id] = device
+            self._save()
+            return device
+
+    def approve(self, name: str, fingerprint: str = "") -> Device:
+        """Approve a waiting device. With a fingerprint, it must match the one shown on the device."""
+        with self._lock:
+            device = self.by_name(name)
+            if device is None:
+                raise TalariaError(f"no device named {name!r}")
+            if fingerprint and not device.device_id.startswith(fingerprint.strip().lower()):
+                raise TalariaError(f"{device.name} has key {device.device_id[:8]}, not {fingerprint}; "
+                                   "not approved")
+            device.approved = True
             self._save()
             return device
 
@@ -298,7 +319,8 @@ class Talaria:
         with self._lock:
             waiting = [p.request_id for p in self._pending.values()
                        if p.device_id == device.device_id and not p.claimed and not p.done]
-        return {"device_id": device.device_id, "name": device.name, "pending": waiting}
+        return {"device_id": device.device_id, "name": device.name, "approved": device.approved,
+                "pending": waiting}
 
     def claim(self, envelope: Any) -> dict:
         device, payload = self.open_envelope(envelope, "claim")
@@ -339,12 +361,15 @@ class Talaria:
             device = self.store.by_name(name)
             if device is None:
                 raise TalariaError(f"no device named {name!r}. {self.describe_online(now)}")
+            if not device.approved:
+                raise TalariaError(f"{device.name} is waiting for approval. The user approves it by "
+                                   f"typing /talaria approve {device.name} in a chat. Nothing ran.")
             return device
         best, best_at = None, 0.0
         for device in self.store.all():
             for sid in session_ids:
                 at = device.sessions.get(sid, 0.0)
-                if at > best_at and device.online(now):
+                if at > best_at and device.usable(now):
                     best, best_at = device, at
         if best is None:
             raise TalariaError("this conversation is not open on any device with Talaria, so there is "
@@ -353,7 +378,7 @@ class Talaria:
 
     def describe_online(self, now: Optional[float] = None) -> str:
         now = self.clock() if now is None else now
-        names = [d.name for d in self.store.all() if d.online(now)]
+        names = [d.name for d in self.store.all() if d.usable(now)]
         return "Online devices: " + (", ".join(names) if names else "none") + "."
 
     def describe_device(self, device: Device) -> str:
@@ -366,6 +391,8 @@ class Talaria:
         """Send one operation to a device and block for its signed result."""
         if op not in OPS:
             raise TalariaError(f"unknown operation {op!r}")
+        if not device.approved:
+            raise TalariaError(f"{device.name} is waiting for approval; nothing ran.")
         if not device.online(self.clock()):
             raise TalariaError(f"{device.name} is offline. {self.describe_online()}")
         request_id = secrets.token_hex(16)

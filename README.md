@@ -41,7 +41,8 @@ Hermes and Hermes Desktop running on the same PC is the simplest setup.
 3. In Hermes Desktop, open **Capabilities → Plugins** and turn on **Talaria**. Press **Rescan**
    first if it isn't listed. It ships switched off.
 4. Open **Settings → Plugins → Talaria**. Pick a device name and list the folders Athena may use, one
-   per line. The status line should say "Online as …".
+   per line. The status line shows "Waiting for approval" with the device's key. In a chat, type the
+   `/talaria approve …` line it shows. The status line then says "Online as …".
 5. Ask Athena to call `talaria_devices`, then for example to list one of those folders.
 
 **Every device must use the same backend.** Device presence lives in the backend's memory. A Desktop
@@ -63,8 +64,9 @@ tools act only on the server."
 
 ## What is not done yet
 
-- Enrollment is trust on first use: the first key to claim a name keeps it until `/talaria forget`.
-  An approval step on the device comes later.
+- The first key to claim a name keeps it until `/talaria forget`. A new key waits for approval:
+  the device's status line shows its key, and you type `/talaria approve <name> <key>` in a chat.
+  Approval happens only through that command, never through a tool, so the agent cannot approve.
 - The private key is kept in the plugin's storage in the app, not in the OS keychain.
 - Write and run cannot detect a symlink that leads out of an allowed folder. List and read check the
   resolved path.

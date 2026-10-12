@@ -512,7 +512,12 @@ export default {
           shell: ctx.storage.get('shell', '')
         }
         const res = await ctx.rest('/hello', { body: await envelope(identity, 'hello', payload), method: 'POST' })
-        lastStatus = `Online as ${res.name} (key ${identity.deviceId.slice(0, 8)}).`
+        const key = identity.deviceId.slice(0, 8)
+
+        lastStatus =
+          res.approved === false
+            ? `Waiting for approval as ${res.name} (key ${key}). In a chat, type: /talaria approve ${res.name} ${key}`
+            : `Online as ${res.name} (key ${key}).`
 
         for (const requestId of res.pending || []) {
           handle(requestId)

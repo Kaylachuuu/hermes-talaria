@@ -42,11 +42,15 @@ class FakeDevice:
             env["public_key"] = self.public_key
         return env
 
-    def hello(self, t, sessions=(), **extra):
+    def hello(self, t, sessions=(), approve=True, **extra):
         payload = {"name": self.name, "platform": "linux", "shell": "bash", "roots": ["/home/k"],
                    "sessions": [{"session_id": s, "at": int(time.time() * 1000)} for s in sessions]}
         payload.update(extra)
-        return t.hello(self.envelope("hello", payload, with_key=True))
+        reply = t.hello(self.envelope("hello", payload, with_key=True))
+        if approve and not reply["approved"]:
+            t.store.approve(self.name)
+            reply["approved"] = True
+        return reply
 
 
 @pytest.fixture
@@ -212,3 +216,31 @@ def test_envelopes_signed_by_the_desktop_half_verify(t):
     assert t.hello(envelopes["hello"])["name"] == "node-device"
     with pytest.raises(core.TalariaError, match="no such request"):
         t.claim(envelopes["claim"])  # signature accepted; the request simply does not exist
+
+
+def test_new_device_waits_for_approval(t, tmp_path):
+    d = FakeDevice()
+    reply = d.hello(t, sessions=["s1"], approve=False)
+    assert reply["approved"] is False
+    device = t.store.by_name("desk")
+    # Named or by default, an unapproved device is sent nothing.
+    with pytest.raises(core.TalariaError, match="waiting for approval"):
+        t.resolve_device("desk", [])
+    with pytest.raises(core.TalariaError, match="no default device"):
+        t.resolve_device(None, ["s1"])
+    with pytest.raises(core.TalariaError, match="waiting for approval"):
+        t.dispatch(device, "list", {"path": "/home/k"}, 5)
+    assert "desk" not in t.describe_online()
+    # A wrong key fingerprint is refused; the right one approves, and approval persists.
+    with pytest.raises(core.TalariaError, match="not approved"):
+        t.store.approve("desk", "00000000")
+    t.store.approve("desk", d.device_id[:8])
+    assert t.resolve_device(None, ["s1"]).name == "desk"
+    assert core.DeviceStore(t.store.path).by_name("desk").approved is True
+
+
+def test_devices_enrolled_before_approval_existed_stay_approved(tmp_path):
+    path = tmp_path / "devices.json"
+    path.write_text(json.dumps({"devices": [{"device_id": "ab" * 16, "name": "old",
+                                             "public_key": "", "enrolled_at": 1.0}]}))
+    assert core.DeviceStore(path).by_name("old").approved is True

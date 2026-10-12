@@ -114,15 +114,27 @@ def _devices(args: dict, **kwargs) -> str:
 
 
 def _slash(raw: str) -> str:
-    talaria = _core().shared()
+    core = _core()
+    talaria = core.shared()
     parts = (raw or "").split()
     if parts[:1] == ["forget"] and len(parts) == 2:
         if talaria.store.forget(parts[1]):
-            return f"Forgot {parts[1]}. It can enroll again by saying hello."
+            return f"Forgot {parts[1]}. It can enroll again by saying hello, and will need approval."
         return f"No device named {parts[1]}."
-    lines = [f"{d.name}  {'online' if d.online(talaria.clock()) else 'offline'}  "
-             f"key {d.device_id[:8]}  folders: {', '.join(d.roots) or 'none'}"
+    if parts[:1] == ["approve"] and len(parts) in (2, 3):
+        try:
+            device = talaria.store.approve(parts[1], parts[2] if len(parts) == 3 else "")
+        except core.TalariaError as exc:
+            return str(exc)
+        return f"Approved {device.name} (key {device.device_id[:8]})."
+    now = talaria.clock()
+    lines = [f"{d.name}  {'online' if d.online(now) else 'offline'}"
+             f"{'' if d.approved else '  WAITING FOR APPROVAL'}  key {d.device_id[:8]}  "
+             f"folders: {', '.join(d.roots) or 'none'}"
              for d in talaria.store.all()]
+    waiting = [d.name for d in talaria.store.all() if not d.approved]
+    if waiting:
+        lines.append(f"Check the key shown on the device, then: /talaria approve {waiting[0]} <key>")
     return "\n".join(lines) or "No devices enrolled yet."
 
 
@@ -144,4 +156,5 @@ def register(ctx) -> None:
                 "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
     )
     ctx.register_command("talaria", handler=_slash,
-                         description="List Talaria devices, or `forget <name>` to remove one.")
+                         description="List Talaria devices; `approve <name> [key]` to let a new one work, "
+                                     "`forget <name>` to remove one.")

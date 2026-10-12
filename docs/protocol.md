@@ -10,8 +10,11 @@ Each device generates an Ed25519 key pair once. Its **device id** is the first 1
 SHA-256 over the raw 32-byte public key, written as 32 hex characters. Its **name** is chosen on the device
 (lowercase letters, digits and dashes, up to 32 characters).
 
-The server binds a name to the first key that claims it ("trust on first use") and keeps the binding in
-`$HERMES_HOME/talaria/devices.json`. `/talaria forget <name>` releases it.
+The server binds a name to the first key that claims it and keeps the binding in
+`$HERMES_HOME/talaria/devices.json`. `/talaria forget <name>` releases it. A new key is enrolled as
+unapproved: it may say hello, but the server sends it no work and does not offer it as a default until
+the user types `/talaria approve <name> [key fingerprint]`. Devices enrolled before approval existed
+are treated as approved.
 
 ## Envelopes
 
@@ -43,7 +46,7 @@ first `hello`) against the included key whose hash must equal `device_id`.
 - **`hello`**, every 5 seconds and whenever focus changes. Payload: `name`, `platform`, `shell`,
   `roots` (allowed folders, for display only; the device enforces them), and `sessions`, a list of
   `{session_id, at}` giving when a chat was last focused or sent from on this device. The reply is
-  `{device_id, name, pending: [request ids]}`. A device counts as online for 150 seconds after a hello: when the app window is hidden and idle,
+  `{device_id, name, approved, pending: [request ids]}`. A device counts as online for 150 seconds after a hello: when the app window is hidden and idle,
   Chromium throttles its timers to about once a minute, while the request event still arrives at once.
 - **`claim`** `{request_id}`. Returns `{request_id, op, args, timeout, digest}` once, and only to the
   target device.
