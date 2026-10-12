@@ -76,6 +76,9 @@ tools act only on the server."
 - Not supported: `dashboard.turn_isolation`, `plugins.isolation: host`, and Desktop connected to its
   backend over SSH (refused, since its terminal would run on the server).
 - No standalone helper yet, so the app has to be open.
+- One person. Hermes has no user accounts, so any chat can name any device. If that changes, the
+  likely path is one Hermes profile per person, each with its own device list. Today every profile
+  served by one backend shares one list.
 
 ## Layout
 
