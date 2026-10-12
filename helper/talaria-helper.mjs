@@ -11,9 +11,10 @@
 // 127.0.0.1) so "the device this conversation was last used from" still works, and stops doing the
 // work itself.
 //
-//   talaria-helper setup        first-time setup: server, sign-in, name, folders
+//   talaria-helper setup        first-time setup: server, sign-in, name
 //   talaria-helper run          run in the foreground (what the background service runs)
 //   talaria-helper install      run it in the background at login, from a copy of this file
+//                               [--server <address>] [--remove-source]
 //   talaria-helper uninstall    stop that
 //   talaria-helper status       is it running, and as which device
 //   talaria-helper login        sign in to the dashboard again
@@ -987,29 +988,12 @@ async function setup(helper) {
   const server = (await ask(`Dashboard address [${config.server || 'http://10.1.0.98:9119'}]: `)) || config.server || 'http://10.1.0.98:9119'
   const fallback = config.name || os.hostname().toLowerCase().replace(/\..*$/, '').replace(/[^a-z0-9-]/g, '-').slice(0, 32)
   const name = ((await ask(`Device name [${fallback}]: `)) || fallback).toLowerCase()
-  const folders = [...(config.folders || [])]
+  const folders = config.folders || []
 
-  console.log('Folders Athena may use on this machine, one per line; an empty line ends the list.')
-
-  for (const folder of folders) {
-    console.log(`  ${folder}`)
-  }
-
-  for (;;) {
-    const folder = await ask('Folder: ')
-
-    if (!folder) {
-      break
-    }
-
-    if (!normalizePath(folder)) {
-      console.log('  That is not an absolute path; skipped.')
-      continue
-    }
-
-    folders.push(folder)
-  }
-
+  console.log(
+    'Allowed folders come from Talaria\'s settings in Hermes Desktop on this machine, once the helper runs.\n' +
+      'Without Desktop here, add them with: talaria-helper folders add <path>'
+  )
   writeConfig(helper.home, { ...config, folders, name, server })
   await signIn(helper, server)
   console.log(await helper.hello())
@@ -1020,12 +1004,38 @@ function scriptPath() {
   return fileURLToPath(import.meta.url)
 }
 
-function install(helper) {
+// --server <address> sets the dashboard first; --remove-source deletes the file this ran from
+// (Hermes Desktop's Install button writes a temporary copy).
+export function installOptions(args) {
+  const options = { removeSource: false, server: '' }
+
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === '--server') {
+      options.server = String(args[++i] || '')
+    } else if (args[i] === '--remove-source') {
+      options.removeSource = true
+    } else {
+      throw new Error(`unknown install option ${args[i]}`)
+    }
+  }
+
+  return options
+}
+
+function install(helper, options = installOptions([])) {
   const target = path.join(helper.home, 'talaria-helper.mjs')
   fs.mkdirSync(helper.home, { recursive: true })
 
+  if (options.server) {
+    writeConfig(helper.home, applySettings(helper.config, { server: options.server }))
+  }
+
   if (path.resolve(scriptPath()) !== path.resolve(target)) {
     fs.copyFileSync(scriptPath(), target)
+
+    if (options.removeSource) {
+      fs.rmSync(scriptPath(), { force: true })
+    }
   }
 
   const node = process.execPath
@@ -1187,7 +1197,7 @@ async function main(argv) {
     case 'run':
       return helper.run()
     case 'install':
-      return install(helper)
+      return install(helper, installOptions(rest))
     case 'status':
       return status(helper)
     case 'folders':

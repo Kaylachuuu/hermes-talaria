@@ -102,3 +102,29 @@ test('the default export is a plugin the loader accepts', () => {
   assert.equal(plugin.defaultEnabled, false)
   assert.equal(typeof plugin.register, 'function')
 })
+
+test('the settings page renders, with the helper section', () => {
+  const store = new Map([['useHelper', true]])
+  const ctx = {
+    onDispose: () => {}, onEvent: () => {}, registerSettingsPage: page => { ctx.page = page },
+    rest: async () => ({}), setInterval: () => {},
+    storage: { get: (k, d) => (store.has(k) ? store.get(k) : d), set: (k, v) => store.set(k, v) }
+  }
+  globalThis.window = { hermesDesktop: {} }
+  plugin.register(ctx)
+  const texts = []
+  const walk = node => {
+    if (node == null || typeof node !== 'object') {
+      if (typeof node === 'string') texts.push(node)
+      return
+    }
+    if (Array.isArray(node)) return node.forEach(walk)
+    if (typeof node.t === 'function') return walk(node.t(node.p))
+    walk(node.p?.children)
+  }
+  walk(ctx.page.render())
+  for (const text of ['Device name', 'Allowed folders (one per line)', 'Background helper', 'Dashboard address', 'Install helper']) {
+    assert.ok(texts.includes(text), text)
+  }
+  delete globalThis.window
+})

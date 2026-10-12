@@ -56,3 +56,15 @@ def devices() -> dict:
     talaria = _core().shared()
     now = talaria.clock()
     return {"devices": [d.public(now) for d in talaria.store.all()]}
+
+
+@router.get("/helper")
+def helper() -> dict:
+    """The background helper's source, for Hermes Desktop's Install button."""
+    path = Path(__file__).resolve().parents[2] / "helper" / "talaria-helper.mjs"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"no helper at {path}; is the plugin a checkout of hermes-talaria?")
+    source = path.read_text(encoding="utf-8")
+    version = next((line.split("'")[1] for line in source.splitlines()
+                    if line.startswith("export const VERSION")), "")
+    return {"source": source, "version": version}

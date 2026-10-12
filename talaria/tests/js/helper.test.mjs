@@ -4,9 +4,11 @@ import crypto from 'node:crypto'
 import { test } from 'node:test'
 
 import {
-  Dashboard, allowedOrigin, applySettings, envelope, newIdentity, normalizePath, openIdentity, shellFor
+  Dashboard, allowedOrigin, applySettings, envelope, installOptions, newIdentity, normalizePath, openIdentity, shellFor
 } from '../../../helper/talaria-helper.mjs'
-import { helperCall, probeHelper, readHelperToken } from '../../desktop/plugin.js'
+import {
+  gatewayAddress, helperCall, helperCommand, helperPlan, probeHelper, readHelperToken
+} from '../../desktop/plugin.js'
 
 test('the helper and the Desktop plugin share the path rules', () => {
   assert.equal(normalizePath('/Users/k/./a/../b', false), '/Users/k/b')
@@ -96,4 +98,27 @@ test('Desktop reads the local token and sends it with every settings call', asyn
   await assert.rejects(helperCall('/bad', 'tok', {}, fetchFn), /nope/)
   assert.deepEqual(seen[0], ['http://127.0.0.1:47219/config', 'GET', 'tok', undefined])
   assert.deepEqual(seen[1], ['http://127.0.0.1:47219/config', 'POST', 'tok', '{"name":"x"}'])
+})
+
+test('the helper takes the app\'s name, folders and dashboard address', () => {
+  const current = { folders: ['/Users/k/code'], name: 'mac', server: 'http://h:1' }
+  assert.deepEqual(helperPlan(current, { folders: ['/Users/k/code/'], name: 'mac', server: '' }, false), { adopt: null, change: null })
+  assert.deepEqual(helperPlan(current, { folders: ['/Users/k/docs'], name: 'macbook', server: 'http://10.1.0.98:9119' }, false),
+    { adopt: null, change: { folders: ['/Users/k/docs'], name: 'macbook', server: 'http://10.1.0.98:9119' } })
+  // An app with no folders yet takes the ones the helper was set up with.
+  assert.deepEqual(helperPlan(current, { folders: [], name: 'mac', server: '' }, false), { adopt: ['/Users/k/code'], change: null })
+  assert.deepEqual(helperPlan({ folders: ['C:\\Users\\K'] }, { folders: ['c:/users/k'], name: '', server: '' }, true), { adopt: null, change: null })
+})
+
+test('Install and Remove run the helper\'s own commands', async () => {
+  assert.equal(helperCommand('/Users/k/.talaria-helper-setup.mjs', 'install', 'http://10.1.0.98:9119'),
+    'node "/Users/k/.talaria-helper-setup.mjs" install --remove-source --server "http://10.1.0.98:9119"')
+  assert.equal(helperCommand('C:\\Users\\K\\AppData\\Roaming\\Talaria\\talaria-helper.mjs', 'uninstall'),
+    'node "C:\\Users\\K\\AppData\\Roaming\\Talaria\\talaria-helper.mjs" uninstall')
+  assert.deepEqual(installOptions(['--server', 'http://h:1', '--remove-source']), { removeSource: true, server: 'http://h:1' })
+  assert.throws(() => installOptions(['--bogus']), /unknown/)
+  const bridge = config => ({ getConnectionConfig: async () => config })
+  assert.equal(await gatewayAddress(bridge({ mode: 'remote', remoteUrl: 'http://10.1.0.98:9119/' })), 'http://10.1.0.98:9119')
+  assert.equal(await gatewayAddress(bridge({ mode: 'local', remoteUrl: 'http://x:1' })), '')
+  assert.equal(await gatewayAddress(undefined), '')
 })

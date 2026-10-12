@@ -425,223 +425,248 @@ export async function helperCall(pathname, token, body, fetchFn = globalThis.fet
   return data
 }
 
+// The dashboard Desktop is bound to (Settings > Gateway), as the helper's default address.
+export async function gatewayAddress(bridge = globalThis.window?.hermesDesktop) {
+  try {
+    const config = await bridge?.getConnectionConfig?.()
+
+    if (!config?.remoteUrl || !['remote', 'cloud'].includes(config.mode)) {
+      return ''
+    }
+
+    return new URL(config.remoteUrl).origin
+  } catch {
+    return ''
+  }
+}
+
+function sameFolders(a = [], b = [], win) {
+  const norm = list => list.map(f => normalizePath(f, win) || f).map(f => (win ? f.toLowerCase() : f))
+  const [x, y] = [norm(a), norm(b)]
+
+  return x.length === y.length && x.every((f, i) => f === y[i])
+}
+
+// One list: the app's name and folders are the helper's. The app takes the helper's folders only
+// while it has none of its own (a helper set up first, from the command line).
+export function helperPlan(current, desired, win) {
+  const change = {}
+  let adopt = null
+
+  if (!desired.folders.length && current.folders?.length) {
+    adopt = current.folders
+  } else if (!sameFolders(desired.folders, current.folders, win)) {
+    change.folders = desired.folders
+  }
+
+  if (desired.name && desired.name !== current.name) {
+    change.name = desired.name
+  }
+
+  if (desired.server && desired.server !== current.server) {
+    change.server = desired.server
+  }
+
+  return { adopt, change: Object.keys(change).length ? change : null }
+}
+
+// Double quotes read the same in a POSIX shell and in PowerShell.
+export function helperCommand(script, action, server = '') {
+  const quote = value => `"${String(value).replace(/"/g, '')}"`
+
+  return action === 'install'
+    ? `node ${quote(script)} install --remove-source${server ? ` --server ${quote(server)}` : ''}`
+    : `node ${quote(script)} uninstall`
+}
+
+function folderOf(file) {
+  return file.slice(0, Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\')))
+}
+
+// Runs the helper's own install or uninstall in a terminal of this app. Install takes the helper
+// from the dashboard (the same checkout as the server half), so the versions match.
+async function helperAction(ctx, bridge, win, action, { home, server }) {
+  let script
+
+  if (action === 'install') {
+    const { source } = await ctx.rest('/helper')
+    script = (await bridge.writeTextFile('~/.talaria-helper-setup.mjs', source)).path
+  } else {
+    script = `${home}${win ? '\\' : '/'}talaria-helper.mjs`
+  }
+
+  const folder = folderOf(script)
+  const result = await runCommand(bridge, { command: helperCommand(script, action, server), cwd: folder, timeout: 90 },
+    [normalizePath(folder, win)], win, new Map(), `helper-${action}`)
+
+  if (result.exit_code !== 0) {
+    const missing = /not recognized|not found/i.test(result.output)
+    throw new Error(missing
+      ? 'Node 18 or later is needed. On Windows: winget install OpenJS.NodeJS.LTS. On a Mac: brew install node. Then restart Hermes Desktop.'
+      : result.output.split('\n').slice(-4).join(' ') || `exit code ${result.exit_code}`)
+  }
+
+  return result.output.split('\n').filter(Boolean).at(-1) || ''
+}
+
 const FIELD = 'w-full rounded border border-(--ui-border) bg-transparent px-2 py-1 text-sm'
-const BUTTON = 'self-start rounded border border-(--ui-border) px-3 py-1 text-sm hover:bg-(--ui-bg-hover)'
+const BUTTON = 'rounded border border-(--ui-border) px-3 py-1 text-sm hover:bg-(--ui-bg-hover) disabled:opacity-50'
+const HINT = 'text-(--ui-text-tertiary)'
 
 function labelled(title, input, hint) {
   return jsxs('label', {
     className: 'flex flex-col gap-1',
-    children: [
-      jsx('span', { className: 'font-medium', children: title }),
-      input,
-      hint ? jsx('span', { className: 'text-(--ui-text-tertiary)', children: hint }) : null
-    ]
+    children: [jsx('span', { className: 'font-medium', children: title }), input, hint ? jsx('span', { className: HINT, children: hint }) : null]
   })
 }
 
-// The helper's own name, folders, dashboard address and sign-in, when it runs on this machine.
-// Shows `fallback` (the app's own settings) when it does not.
-function HelperSettings({ fallback, win }) {
-  const [state, setState] = useState({ loading: true })
-  const [form, setForm] = useState({ folders: '', name: '', server: '' })
-  const [login, setLogin] = useState({ password: '', username: '' })
+function HelperSection({ ctx, server, setServer, sync, win }) {
+  const bridge = globalThis.window?.hermesDesktop
+  const [helper, setHelper] = useState(null)
+  const [gateway, setGateway] = useState('')
+  const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [login, setLogin] = useState({ password: '', username: '' })
+  const address = server || gateway
 
   useEffect(() => {
     let live = true
-
-    ;(async () => {
-      const helper = await probeHelper()
-
-      if (!helper) {
-        return { missing: true }
-      }
-
-      const token = await readHelperToken(helper.home, win)
-
-      if (!token) {
-        return { error: `Could not read the helper's local token in ${helper.home}.` }
-      }
-
-      const config = await helperCall('/config', token)
-      setForm({ folders: (config.folders || []).join('\n'), name: config.name || '', server: config.server || '' })
-
-      return { helper, token }
-    })()
-      .catch(error => ({ error: String(error?.message || error) }))
-      .then(next => live && setState(next))
+    const poll = () => probeHelper().then(found => live && setHelper(found))
+    gatewayAddress().then(found => live && setGateway(found))
+    poll()
+    const timer = setInterval(poll, 3000)
 
     return () => {
       live = false
+      clearInterval(timer)
     }
   }, [])
 
-  if (state.loading) {
-    return jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Looking for the background helper…' })
-  }
+  const act = async (label, work) => {
+    setBusy(true)
+    setMessage(`${label}…`)
 
-  if (state.missing) {
-    return jsxs('div', {
-      className: 'flex flex-col gap-4',
-      children: [
-        jsx('div', {
-          className: 'text-(--ui-text-tertiary)',
-          children:
-            'The background helper is not running on this machine, so the app does the work with the name and ' +
-            'folders below. Once the helper runs (talaria-helper install), its own settings show here instead.'
-        }),
-        fallback
-      ]
-    })
-  }
-
-  if (state.error) {
-    return jsx('div', { className: 'text-(--ui-text-tertiary)', children: state.error })
-  }
-
-  const set = key => e => setForm({ ...form, [key]: e.target.value })
-  const save = async () => {
     try {
-      const res = await helperCall('/config', state.token, {
-        folders: form.folders.split(/\r?\n/),
-        name: form.name,
-        server: form.server
-      })
-      setMessage(`Saved. ${res.status}`)
+      setMessage(await work())
+      setHelper(await probeHelper())
+      sync()
     } catch (error) {
-      setMessage(`Not saved: ${error.message}`)
+      setMessage(`${label} failed: ${String(error?.message || error)}`)
+    } finally {
+      setBusy(false)
     }
   }
-  const signIn = async () => {
-    try {
-      const res = await helperCall('/login', state.token, login)
-      setLogin({ password: '', username: login.username })
-      setMessage(`Signed in. ${res.status}`)
-    } catch (error) {
-      setMessage(`Not signed in: ${error.message}`)
-    }
-  }
+  const install = () => act(helper ? 'Updating the helper' : 'Installing the helper', async () => {
+    const said = await helperAction(ctx, bridge, win, 'install', { server: address })
+
+    return `${said} If it says it is signed out below, sign it in.`
+  })
+  const remove = () => act('Removing the helper', () => helperAction(ctx, bridge, win, 'uninstall', { home: helper.home }))
+  const signIn = () => act('Signing in', async () => {
+    const token = await readHelperToken(helper.home, win)
+    const res = await helperCall('/login', token, login)
+    setLogin({ password: '', username: login.username })
+
+    return `Signed in. ${res.status}`
+  })
+  const signedOut = helper && /signed out|Not connected/i.test(helper.status || '')
 
   return jsxs('div', {
-    className: 'flex flex-col gap-4',
+    className: 'flex flex-col gap-3 rounded border border-(--ui-border) p-3',
     children: [
-      jsx('div', {
-        className: 'text-(--ui-text-tertiary)',
-        children: `The background helper is running (key ${state.helper.key}). These are its settings.`
+      jsx('span', { className: 'font-medium', children: 'Background helper' }),
+      jsx('span', {
+        className: HINT,
+        children: helper
+          ? `Running as this machine's device (key ${helper.key}, version ${helper.version}). ${helper.status}`
+          : 'Not running on this machine. Install it to keep this machine reachable with the app closed. It uses the name and folders above.'
       }),
-      labelled('Device name', jsx('input', { className: FIELD, onChange: set('name'), value: form.name }),
-        'Lowercase letters, digits and dashes. Athena uses this name to aim at this device.'),
-      labelled('Allowed folders (one per line)',
-        jsx('textarea', { className: `${FIELD} min-h-28 font-mono`, onChange: set('folders'), value: form.folders }),
-        'The helper refuses any path outside these, symlinks included. Empty means nothing is allowed.'),
-      labelled('Dashboard address', jsx('input', { className: FIELD, onChange: set('server'), value: form.server })),
-      jsx('button', { className: BUTTON, onClick: save, type: 'button', children: 'Save helper settings' }),
+      labelled('Dashboard address',
+        jsx('input', {
+          className: FIELD,
+          onBlur: () => {
+            ctx.storage.set('server', server.trim())
+            sync()
+          },
+          onChange: e => setServer(e.target.value),
+          placeholder: gateway || 'http://host:9119',
+          value: server
+        }),
+        gateway
+          ? `Empty uses the gateway this app is bound to (${gateway}).`
+          : 'This app uses its own local backend, so type the address of the shared dashboard.'),
       jsxs('div', {
-        className: 'flex flex-col gap-2',
+        className: 'flex gap-2',
         children: [
-          jsx('span', { className: 'font-medium', children: 'Sign the helper in to the dashboard' }),
-          jsx('input', {
-            autoComplete: 'username',
-            className: FIELD,
-            onChange: e => setLogin({ ...login, username: e.target.value }),
-            placeholder: 'Username',
-            value: login.username
-          }),
-          jsx('input', {
-            autoComplete: 'current-password',
-            className: FIELD,
-            onChange: e => setLogin({ ...login, password: e.target.value }),
-            placeholder: 'Password',
-            type: 'password',
-            value: login.password
-          }),
-          jsx('span', {
-            className: 'text-(--ui-text-tertiary)',
-            children: 'Only needed if it says it is signed out. The password goes to the helper once and is not kept.'
-          }),
-          jsx('button', { className: BUTTON, onClick: signIn, type: 'button', children: 'Sign in' })
+          jsx('button', { className: BUTTON, disabled: busy || !address, onClick: install, type: 'button', children: helper ? 'Update helper' : 'Install helper' }),
+          helper ? jsx('button', { className: BUTTON, disabled: busy, onClick: remove, type: 'button', children: 'Remove helper' }) : null
         ]
       }),
-      message ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: message }) : null
+      signedOut
+        ? jsxs('div', {
+            className: 'flex flex-col gap-2',
+            children: [
+              jsx('span', { className: HINT, children: 'Sign the helper in with the dashboard login. The password goes to the helper once and is not kept.' }),
+              jsx('input', { autoComplete: 'username', className: FIELD, onChange: e => setLogin({ ...login, username: e.target.value }), placeholder: 'Username', value: login.username }),
+              jsx('input', { autoComplete: 'current-password', className: FIELD, onChange: e => setLogin({ ...login, password: e.target.value }), placeholder: 'Password', type: 'password', value: login.password }),
+              jsx('button', { className: `${BUTTON} self-start`, disabled: busy, onClick: signIn, type: 'button', children: 'Sign in' })
+            ]
+          })
+        : null,
+      message ? jsx('span', { className: HINT, children: message }) : null
     ]
   })
 }
 
-function Settings({ ctx, status }) {
+function Settings({ ctx, status, sync }) {
   const win = isWindowsPlatform()
   const [useHelper, setUseHelper] = useState(() => ctx.storage.get('useHelper', true))
   const [name, setName] = useState(() => ctx.storage.get('name', defaultName(win)))
   const [roots, setRoots] = useState(() => ctx.storage.get('roots', ''))
+  const [server, setServer] = useState(() => ctx.storage.get('server', ''))
   const saved = parseRoots(roots, win)
-  const field = FIELD
-  const appFields = jsxs('div', {
-    className: 'flex flex-col gap-4',
-    children: [
-      jsxs('label', {
-        className: 'flex flex-col gap-1',
-        children: [
-          jsx('span', { className: 'font-medium', children: 'Device name' }),
-          jsx('input', {
-            className: field,
-            onChange: e => setName(e.target.value),
-            onBlur: () => ctx.storage.set('name', name.trim().toLowerCase()),
-            value: name
-          }),
-          jsx('span', {
-            className: 'text-(--ui-text-tertiary)',
-            children: 'Lowercase letters, digits and dashes. Athena uses this name to aim at this device.'
-          })
-        ]
-      }),
-      jsxs('label', {
-        className: 'flex flex-col gap-1',
-        children: [
-          jsx('span', { className: 'font-medium', children: 'Allowed folders (one per line)' }),
-          jsx('textarea', {
-            className: `${field} min-h-28 font-mono`,
-            onChange: e => setRoots(e.target.value),
-            onBlur: () => ctx.storage.set('roots', roots),
-            value: roots
-          }),
-          jsx('span', {
-            className: 'text-(--ui-text-tertiary)',
-            children: `Talaria refuses any path outside these. ${saved.length} folder(s) in force. Empty means nothing is allowed.`
-          })
-        ]
-      }),
-      jsx('div', { className: 'text-(--ui-text-tertiary)', children: status() })
-    ]
-  })
 
   return jsxs('div', {
     className: 'flex max-w-xl flex-col gap-4 p-4 text-sm',
     children: [
+      labelled('Device name',
+        jsx('input', {
+          className: FIELD,
+          onBlur: () => {
+            ctx.storage.set('name', name.trim().toLowerCase())
+            sync()
+          },
+          onChange: e => setName(e.target.value),
+          value: name
+        }),
+        'Lowercase letters, digits and dashes. Athena uses this name to aim at this device.'),
+      labelled('Allowed folders (one per line)',
+        jsx('textarea', {
+          className: `${FIELD} min-h-28 font-mono`,
+          onBlur: () => {
+            ctx.storage.set('roots', roots)
+            sync()
+          },
+          onChange: e => setRoots(e.target.value),
+          value: roots
+        }),
+        `Talaria refuses any path outside these, here and in the background helper. ${saved.length} folder(s) in force. Empty means nothing is allowed.`),
       jsxs('label', {
-        className: 'flex flex-col gap-1',
+        className: 'flex items-center gap-2 font-medium',
         children: [
-          jsxs('span', {
-            className: 'flex items-center gap-2 font-medium',
-            children: [
-              jsx('input', {
-                checked: useHelper,
-                onChange: e => {
-                  setUseHelper(e.target.checked)
-                  ctx.storage.set('useHelper', e.target.checked)
-                },
-                type: 'checkbox'
-              }),
-              'Use the background helper when it runs on this machine'
-            ]
+          jsx('input', {
+            checked: useHelper,
+            onChange: e => {
+              setUseHelper(e.target.checked)
+              ctx.storage.set('useHelper', e.target.checked)
+            },
+            type: 'checkbox'
           }),
-          jsx('span', {
-            className: 'text-(--ui-text-tertiary)',
-            children:
-              'The helper keeps this machine reachable with the app closed. The app then only tells it which chats ' +
-              'you have open here. Off: the app does the work itself, with its own name and folders.'
-          })
+          'Use the background helper when it runs on this machine'
         ]
       }),
-      useHelper ? jsx(HelperSettings, { fallback: appFields, win }) : appFields
+      useHelper ? jsx(HelperSection, { ctx, server, setServer, sync, win }) : null,
+      jsx('div', { className: HINT, children: status() })
     ]
   })
 }
@@ -706,6 +731,33 @@ export default {
       }
     }
 
+    // The helper takes this app's name, folders and dashboard address.
+    let helperToken = { home: '', token: '' }
+    const syncHelper = async helper => {
+      if (helperToken.home !== helper.home || !helperToken.token) {
+        helperToken = { home: helper.home, token: await readHelperToken(helper.home, win, bridge) }
+      }
+
+      const current = await helperCall('/config', helperToken.token).catch(error => {
+        helperToken = { home: '', token: '' } // read the token again next time
+        throw error
+      })
+      const desired = {
+        folders: roots().map(r => toNative(r, win)),
+        name: ctx.storage.get('name', defaultName(win)),
+        server: ctx.storage.get('server', '') || (await gatewayAddress(bridge))
+      }
+      const plan = helperPlan(current, desired, win)
+
+      if (plan.adopt) {
+        ctx.storage.set('roots', plan.adopt.join('\n'))
+      }
+
+      if (plan.change) {
+        await helperCall('/config', helperToken.token, plan.change)
+      }
+    }
+
     const hello = async () => {
       if (disposed || !identity) {
         return
@@ -724,6 +776,9 @@ export default {
             method: 'POST'
           }).catch(() => {})
           lastStatus = `Using the background helper. ${helper.status}`
+          await syncHelper(helper).catch(error => {
+            lastStatus += ` (Could not pass it these settings: ${String(error?.message || error)})`
+          })
 
           return
         }
@@ -757,7 +812,7 @@ export default {
     ctx.registerSettingsPage?.({
       icon: 'rocket',
       id: 'settings',
-      render: () => jsx(Settings, { ctx, status: () => lastStatus }),
+      render: () => jsx(Settings, { ctx, status: () => lastStatus, sync: () => hello() }),
       title: 'Talaria'
     })
 

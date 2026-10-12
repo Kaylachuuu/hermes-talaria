@@ -64,7 +64,7 @@ target checked should also work, but has not been tried.
 ## The background helper
 
 ```
-talaria-helper setup        # dashboard address, sign-in, device name, allowed folders
+talaria-helper setup        # dashboard address, sign-in, device name
 talaria-helper install      # run in the background at every login
 talaria-helper status
 talaria-helper folders add <path>    # or: remove <path>; read again within seconds
@@ -83,9 +83,13 @@ talaria-helper folders add <path>    # or: remove <path>; read again within seco
   (`/talaria approve <name> <key>`); the helper then replaces the app's key for that name.
 - **Folders.** Its own list, in its `config.json`. Every path is checked again after resolving
   symlinks, so a link inside an allowed folder cannot lead out of it, for any operation.
-- **Settings in Desktop.** With the helper running, Talaria's settings in Hermes Desktop show the
-  helper's device name, allowed folders and dashboard address, and a sign-in box for when it is
-  signed out. Saving there writes the helper's `config.json`, the same as the commands above.
+- **Settings in Desktop.** Talaria's settings in Hermes Desktop have one device name and one list
+  of allowed folders, used by the app and passed on to the helper within seconds. The helper's
+  dashboard address defaults to the gateway Desktop is bound to (Settings > Gateway). **Install
+  helper**, **Update helper** and **Remove helper** buttons run the commands below in the app's own
+  terminal (Node 18 or later must be installed), taking the helper from the dashboard so its
+  version matches the server half. A sign-in box appears there when the helper is signed out. On
+  a machine without Desktop, use `talaria-helper folders add <path>`.
 - **Local port.** It listens on 127.0.0.1:47219 for the Desktop app only (status, which chats are
   open, and its settings). Requests from web pages are refused. Reading or changing settings also
   needs the `local-token` file in the helper's settings folder, which only this user can read.

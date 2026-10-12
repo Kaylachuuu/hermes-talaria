@@ -244,3 +244,9 @@ def test_desktop_changes_the_helper_settings_only_with_its_local_token(hermes, h
     assert changed["folders"] == [str(allowed), str(extra)]
     assert json.loads((home / "config.json").read_text())["folders"] == [str(allowed), str(extra)]
     _wait_for(lambda: str(extra) in talaria.store.by_name("itest-helper").roots, "the new folder")
+
+
+def test_desktop_can_fetch_the_helper_to_install(hermes):
+    client, _ = hermes
+    body = client.get("/api/plugins/talaria/helper").json()
+    assert body["version"] and "talaria-helper" in body["source"]
