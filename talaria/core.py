@@ -478,8 +478,15 @@ _INSTANCE_LOCK = threading.Lock()
 
 
 def _store_path() -> Path:
-    from hermes_constants import get_hermes_home
-    return Path(get_hermes_home()) / "talaria" / "devices.json"
+    """One device list per backend, in the root Hermes home. Every agent (profile) the backend serves
+    shares it, rather than whichever profile happened to load the plugin first."""
+    try:
+        from hermes_constants import get_default_hermes_root
+        home = get_default_hermes_root()
+    except ImportError:  # older Hermes
+        from hermes_constants import get_hermes_home
+        home = get_hermes_home()
+    return Path(home) / "talaria" / "devices.json"
 
 
 def _broadcast(event: str, payload: dict) -> None:

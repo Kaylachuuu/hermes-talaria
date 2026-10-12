@@ -67,6 +67,12 @@ checkout and copy the device half into Desktop's plugin folder. On the Windows m
 dashboard as the "Hermes Dashboard" scheduled task, the PowerShell one restarts it too. Run either
 once with `--install` / `-Install` to put it on the PATH as `sync-talaria`.
 
+**Several agents.** Every agent on one backend uses the same devices: helper agents the main agent
+spawns inherit its Talaria tools and its default device, and each Hermes profile on the backend sees
+the same device list and approvals (kept in the root Hermes home). Requests from different agents
+can run on one device at once; each command gets its own terminal. There is no per-agent limit yet,
+such as one agent allowed only one device.
+
 ## What is not done yet
 
 - The first key to claim a name keeps it until `/talaria forget`. A new key waits for approval:
@@ -84,8 +90,7 @@ once with `--install` / `-Install` to put it on the PATH as `sync-talaria`.
   backend over SSH (refused, since its terminal would run on the server).
 - No standalone helper yet, so the app has to be open.
 - One person. Hermes has no user accounts, so any chat can name any device. If that changes, the
-  likely path is one Hermes profile per person, each with its own device list. Today every profile
-  served by one backend shares one list.
+  likely path is one Hermes profile per person, each with its own device list.
 
 ## Layout
 

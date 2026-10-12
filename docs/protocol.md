@@ -11,7 +11,7 @@ SHA-256 over the raw 32-byte public key, written as 32 hex characters. Its **nam
 (lowercase letters, digits and dashes, up to 32 characters).
 
 The server binds a name to the first key that claims it and keeps the binding in
-`$HERMES_HOME/talaria/devices.json`. `/talaria forget <name>` releases it. A new key is enrolled as
+`talaria/devices.json` in the root Hermes home (shared by every profile the backend serves). `/talaria forget <name>` releases it. A new key is enrolled as
 unapproved: it may say hello, but the server sends it no work and does not offer it as a default until
 the user types `/talaria approve <name> [key fingerprint]`. Devices enrolled before approval existed
 are treated as approved. `/talaria revoke <name>` removes a device and lists its id under
