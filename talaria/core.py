@@ -29,7 +29,10 @@ PROTOCOL = "talaria/1"
 #: A signed envelope older or newer than this is refused.
 CLOCK_SKEW_MS = 120_000
 #: A device that has not said hello for this long is offline.
-ONLINE_WINDOW_S = 20.0
+# Devices say hello every 5s, but once the app window is hidden or minimized and idle, Chromium
+# throttles its timers to as little as once a minute. Requests still reach a hidden window at once
+# through the event stream, so presence has to outlast that throttling rather than the 5s cadence.
+ONLINE_WINDOW_S = 150.0
 #: How long a device has to pick up a request before the tool call fails.
 CLAIM_TIMEOUT_S = 12.0
 #: Extra time after a command's own timeout before the server gives up on the result.

@@ -43,7 +43,8 @@ first `hello`) against the included key whose hash must equal `device_id`.
 - **`hello`**, every 5 seconds and whenever focus changes. Payload: `name`, `platform`, `shell`,
   `roots` (allowed folders, for display only; the device enforces them), and `sessions`, a list of
   `{session_id, at}` giving when a chat was last focused or sent from on this device. The reply is
-  `{device_id, name, pending: [request ids]}`. A device is online for 20 seconds after a hello.
+  `{device_id, name, pending: [request ids]}`. A device counts as online for 150 seconds after a hello: when the app window is hidden and idle,
+  Chromium throttles its timers to about once a minute, while the request event still arrives at once.
 - **`claim`** `{request_id}`. Returns `{request_id, op, args, timeout, digest}` once, and only to the
   target device.
 - **`result`** `{request_id, digest, ok, result | error}`. `digest` must equal the claimed one, which
