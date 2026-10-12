@@ -138,9 +138,11 @@ def test_device_refusal_is_reported(t):
     d = FakeDevice()
     d.hello(t)
     thread = _serve(t, d, ok=False)
-    with pytest.raises(core.TalariaError, match="outside allowed folders"):
+    with pytest.raises(core.TalariaError, match="outside allowed folders") as caught:
         t.dispatch(t.store.by_name("desk"), "read", {"path": "/etc/passwd"}, 5)
     thread.join()
+    # The refusal tells the model where this device's paths live, so it can retry.
+    assert "its allowed folders are:" in str(caught.value)
 
 
 def test_result_must_name_the_claimed_request(t):

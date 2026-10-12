@@ -50,7 +50,9 @@ _DEVICE = {"type": "string", "description": "Device name from talaria_devices, e
 _LEAD = ("Talaria: acts on the user's own computer (the device they chat from, or one they name), "
          "never on the server. Use this, not the server file or terminal tools, for anything on "
          "\"my Mac\", \"my laptop\", \"my desktop\" or a path the user gave from their device. "
-         "Only folders the user allowed on that device work; call talaria_devices to see them. ")
+         "Only folders the user allowed on that device work, and paths must be absolute in that "
+         "device's own form (C:\\... on Windows, /Users/... on a Mac). Each device has its own "
+         "folders; call talaria_devices to see which device is the default and its folders. ")
 
 TOOLS = {
     "talaria_list": ("list", _LEAD + "Lists a folder: its entries, which may be none.",

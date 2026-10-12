@@ -353,6 +353,12 @@ class Talaria:
         names = [d.name for d in self.store.all() if d.online(now)]
         return "Online devices: " + (", ".join(names) if names else "none") + "."
 
+    def describe_device(self, device: Device) -> str:
+        """Where a device's paths live, so the model can retry with a path that fits it."""
+        folders = ", ".join(device.roots) or "none set"
+        return (f"{device.name} is a {device.platform or 'unknown'} device; its allowed folders are: "
+                f"{folders}. Use absolute paths inside one of them.")
+
     def dispatch(self, device: Device, op: str, args: dict, timeout: float) -> Any:
         """Send one operation to a device and block for its signed result."""
         if op not in OPS:
@@ -377,7 +383,8 @@ class Talaria:
                 raise TalariaError(f"{device.name} did not answer within {int(timeout)}s; it may still "
                                    "be running. Asked the device to stop it.")
             if not pending.ok:
-                raise TalariaError(f"{device.name} refused or failed: {pending.result}")
+                raise TalariaError(f"{device.name} refused or failed: {pending.result}. "
+                                   f"{self.describe_device(device)}")
             return pending.result
         finally:
             with self._lock:
