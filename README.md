@@ -56,11 +56,16 @@ Windows `%LOCALAPPDATA%\hermes`, on a Mac `~/.hermes`), then press **Rescan** in
 Plugins. Repeat after an update that changes `plugin.js`. **Install from Git** with the Desktop
 target checked should also work, but has not been tried.
 
-**Tell the agent to use it.** A capable model picks Talaria from the tool descriptions, but on the
-machine that hosts Hermes the built-in file and terminal tools also reach the same disk and can
-look right. One line in the agent's standing instructions settles it, for example: "Anything on my
-own computers (files, folders, commands) goes through the talaria_* tools. The terminal and file
-tools act only on the server."
+**Steering the agent.** On the machine that hosts Hermes, the built-in file and terminal tools reach
+the same disk as Talaria and can look right. So Talaria also adds a short section to each new
+session's system prompt: the user's devices are reached only through `talaria_*`. Hermes builds
+without plugin prompt sections skip it; there, put the same line in the agent's standing
+instructions.
+
+**Updating.** `scripts/sync-talaria.sh` (Mac) and `scripts/sync-talaria.ps1` (Windows) pull the
+checkout and copy the device half into Desktop's plugin folder. On the Windows machine that runs the
+dashboard as the "Hermes Dashboard" scheduled task, the PowerShell one restarts it too. Run either
+once with `--install` / `-Install` to put it on the PATH as `sync-talaria`.
 
 ## What is not done yet
 

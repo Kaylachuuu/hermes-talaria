@@ -147,7 +147,20 @@ def _slash(raw: str) -> str:
     return "\n".join(lines) or "No devices enrolled yet."
 
 
+# Added to every new session's system prompt. On the machine that hosts Hermes the built-in file and
+# terminal tools reach the same disk as Talaria and look right, so the tool descriptions alone do not
+# settle which to use.
+_PROMPT = ("Talaria: the user's own computers (their laptop, desktop, Mac and so on) are reached only "
+           "through the talaria_* tools. The built-in terminal and file tools act on the machine Hermes "
+           "runs on, which is not the user's device even when it looks like it. For files, folders or "
+           "commands on the user's device, use talaria_*; call talaria_devices to see the devices, "
+           "their folders and which one is the default.")
+
+
 def register(ctx) -> None:
+    # Older Hermes builds lack prompt sections; the tool descriptions still steer there.
+    if hasattr(ctx, "register_system_prompt_section"):
+        ctx.register_system_prompt_section("talaria.devices", _PROMPT)
     for name, (op, description, properties, required) in TOOLS.items():
         ctx.register_tool(
             name=name, toolset="talaria", handler=_make_handler(op),

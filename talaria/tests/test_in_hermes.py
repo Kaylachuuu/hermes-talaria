@@ -99,3 +99,9 @@ def test_revoke_command_locks_a_device_out(hermes):
     payload = {"name": "itest-lost", "platform": "linux", "shell": "bash", "roots": [], "sessions": []}
     r = client.post("/api/plugins/talaria/hello", json=device.envelope("hello", payload, with_key=True))
     assert r.status_code == 403
+
+
+def test_system_prompt_points_the_agent_at_talaria(hermes):
+    from hermes_cli.plugins import get_plugin_manager
+    section = get_plugin_manager()._system_prompt_sections.get("talaria.devices")
+    assert section is not None and "talaria_*" in section.content
