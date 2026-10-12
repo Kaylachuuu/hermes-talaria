@@ -149,7 +149,7 @@ def helper(hermes, tmp_path_factory):
                SHELL="/bin/sh")
     proc = subprocess.Popen(["node", str(HELPER), "run"], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    yield {"allowed": allowed, "outside": outside, "local": f"http://127.0.0.1:{local_port}",
+    yield {"allowed": allowed, "outside": outside, "local": f"http://127.0.0.1:{local_port}", "home": home,
            "urlopen": urllib.request.urlopen, "Request": urllib.request.Request}
     proc.terminate()
     server.should_exit = True
@@ -212,3 +212,35 @@ def test_desktop_hands_the_helper_its_chats_and_web_pages_are_refused(hermes, he
     with pytest.raises(urllib.error.HTTPError) as caught:
         helper["urlopen"](evil)
     assert caught.value.code == 403
+
+
+def test_desktop_changes_the_helper_settings_only_with_its_local_token(hermes, helper):
+    import json
+    import urllib.error
+    talaria = __import__("sys").modules["hermes_talaria_core"].shared()
+    _wait_for(lambda: talaria.store.by_name("itest-helper"), "the helper's hello")
+    home, allowed = helper["home"], helper["allowed"]
+
+    def ask(path, body=None, token=None):
+        headers = {"content-type": "application/json", "origin": "file://"}
+        if token:
+            headers["x-talaria-token"] = token
+        req = helper["Request"](f"{helper['local']}{path}", method="GET" if body is None else "POST",
+                                data=None if body is None else json.dumps(body).encode(), headers=headers)
+        return json.loads(helper["urlopen"](req).read())
+
+    for path, body in (("/config", None), ("/config", {"folders": []}), ("/login", {"username": "a"})):
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            ask(path, body, token="wrong")
+        assert caught.value.code == 403
+    token = (home / "local-token").read_text().strip()
+    assert ask("/config", token=token)["folders"] == [str(allowed)]
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        ask("/config", {"folders": ["relative/path"]}, token=token)
+    assert caught.value.code == 400
+    extra = home / "extra"
+    extra.mkdir()
+    changed = ask("/config", {"folders": [str(allowed), str(extra)]}, token=token)
+    assert changed["folders"] == [str(allowed), str(extra)]
+    assert json.loads((home / "config.json").read_text())["folders"] == [str(allowed), str(extra)]
+    _wait_for(lambda: str(extra) in talaria.store.by_name("itest-helper").roots, "the new folder")

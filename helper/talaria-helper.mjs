@@ -623,6 +623,7 @@ export class Helper {
     }
 
     this.identity = openIdentity(this.secrets.identity)
+    this.localToken = localToken(home)
     this.sessions = new Map()
     this.inflight = new Set()
     this.status = 'Starting.'
@@ -728,7 +729,7 @@ export class Helper {
       }
 
       const cors = {
-        'Access-Control-Allow-Headers': 'content-type',
+        'Access-Control-Allow-Headers': 'content-type, x-talaria-token',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Origin': origin || '*',
         'Access-Control-Allow-Private-Network': 'true'
@@ -744,13 +745,7 @@ export class Helper {
         res.writeHead(status, { ...cors, 'content-type': 'application/json' }).end(JSON.stringify(body))
       }
 
-      if (req.method === 'GET' && req.url === '/status') {
-        send(200, { key: this.identity.deviceId.slice(0, 8), name: this.config.name, status: this.status, version: VERSION })
-
-        return
-      }
-
-      if (req.method === 'POST' && req.url === '/sessions') {
+      const readBody = handler => {
         let body = ''
 
         req.on('data', chunk => {
@@ -760,16 +755,84 @@ export class Helper {
             req.destroy()
           }
         })
-        req.on('end', () => {
-          try {
-            for (const claim of JSON.parse(body).sessions || []) {
-              this.claimSession(claim?.session_id, Number(claim?.at) || Date.now())
-            }
+        req.on('end', async () => {
+          let parsed
 
-            send(200, { ok: true })
+          try {
+            parsed = JSON.parse(body || '{}')
           } catch {
             send(400, { error: 'bad body' })
+
+            return
           }
+
+          try {
+            send(200, await handler(parsed))
+          } catch (error) {
+            send(400, { error: error.message })
+          }
+        })
+      }
+      const presented = Buffer.from(String(req.headers['x-talaria-token'] || ''))
+      const expected = Buffer.from(this.localToken)
+      const trusted = presented.length === expected.length && crypto.timingSafeEqual(presented, expected)
+
+      if (req.method === 'GET' && req.url === '/status') {
+        send(200, {
+          home: this.home,
+          key: this.identity.deviceId.slice(0, 8),
+          name: this.config.name,
+          status: this.status,
+          version: VERSION
+        })
+
+        return
+      }
+
+      if (req.method === 'POST' && req.url === '/sessions') {
+        readBody(body => {
+          for (const claim of body.sessions || []) {
+            this.claimSession(claim?.session_id, Number(claim?.at) || Date.now())
+          }
+
+          return { ok: true }
+        })
+
+        return
+      }
+
+      // Settings and sign-in, for Desktop's settings page only (it holds the local token).
+      if (['/config', '/login'].includes(req.url) && !trusted) {
+        send(403, { error: 'the local token is missing or wrong' })
+
+        return
+      }
+
+      if (req.method === 'GET' && req.url === '/config') {
+        const { folders = [], name = '', server = '' } = this.config
+        send(200, { folders, name, server })
+
+        return
+      }
+
+      if (req.method === 'POST' && req.url === '/config') {
+        readBody(async change => {
+          const next = applySettings(this.config, change)
+          writeConfig(this.home, next)
+          this.log('settings changed from Hermes Desktop')
+
+          return { folders: next.folders || [], name: next.name, server: next.server, status: await this.hello() }
+        })
+
+        return
+      }
+
+      if (req.method === 'POST' && req.url === '/login') {
+        readBody(async ({ password, username }) => {
+          await this.dashboard().login(String(username || ''), String(password || ''))
+          this.log('signed in again from Hermes Desktop')
+
+          return { status: await this.hello() }
         })
 
         return
@@ -799,6 +862,69 @@ export class Helper {
       await new Promise(resolve => setTimeout(resolve, HELLO_EVERY_MS))
     }
   }
+}
+
+// Changing the helper's settings over its local port needs this token. It is a file only this user
+// can read, which Hermes Desktop reads through its own file bridge; other programs and web pages
+// cannot present it.
+export function localToken(home) {
+  const file = path.join(home, 'local-token')
+
+  try {
+    const token = fs.readFileSync(file, 'utf8').trim()
+
+    if (token.length >= 32) {
+      return token
+    }
+  } catch {
+    // Made below.
+  }
+
+  const token = crypto.randomBytes(24).toString('hex')
+  fs.mkdirSync(home, { recursive: true })
+  fs.writeFileSync(file, token, { mode: 0o600 })
+
+  return token
+}
+
+export const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
+
+// A settings change from Desktop, checked the same way setup checks it. Returns the new config.
+export function applySettings(config, change) {
+  const next = { ...config }
+
+  if (change.name !== undefined) {
+    const name = String(change.name).trim().toLowerCase()
+
+    if (!NAME_RE.test(name)) {
+      throw new Error('the name must be lowercase letters, digits and dashes, up to 32')
+    }
+
+    next.name = name
+  }
+
+  if (change.folders !== undefined) {
+    const folders = (Array.isArray(change.folders) ? change.folders : []).map(f => String(f).trim()).filter(Boolean)
+    const bad = folders.find(f => !normalizePath(f))
+
+    if (bad) {
+      throw new Error(`not an absolute path on this machine: ${bad}`)
+    }
+
+    next.folders = folders
+  }
+
+  if (change.server !== undefined) {
+    const server = String(change.server).trim().replace(/\/+$/, '')
+
+    if (!/^https?:\/\/[^\s/]+$/.test(server)) {
+      throw new Error('the dashboard address looks like http://host:port')
+    }
+
+    next.server = server
+  }
+
+  return next
 }
 
 // Hermes Desktop loads from file:// or its own scheme, or from localhost in development. Any web

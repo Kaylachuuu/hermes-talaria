@@ -7,7 +7,7 @@
 // checked anything: the folder rules are enforced on this side.
 
 import { host } from '@hermes/plugin-sdk'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const PROTOCOL = 'talaria/1'
@@ -403,42 +403,169 @@ export async function probeHelper(fetchFn = globalThis.fetch) {
   }
 }
 
+// Talking to the helper's settings, with the token only this user's files hold.
+export async function readHelperToken(home, win, bridge = globalThis.window?.hermesDesktop) {
+  const res = await bridge?.readFileText?.(`${home}${win ? '\\' : '/'}local-token`)
+
+  return typeof res?.text === 'string' ? res.text.trim() : ''
+}
+
+export async function helperCall(pathname, token, body, fetchFn = globalThis.fetch) {
+  const res = await fetchFn(`${HELPER_URL}${pathname}`, {
+    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: { 'content-type': 'application/json', 'x-talaria-token': token },
+    method: body === undefined ? 'GET' : 'POST'
+  })
+  const data = await res.json().catch(() => ({}))
+
+  if (!res.ok) {
+    throw new Error(data.error || `the helper answered ${res.status}`)
+  }
+
+  return data
+}
+
+const FIELD = 'w-full rounded border border-(--ui-border) bg-transparent px-2 py-1 text-sm'
+const BUTTON = 'self-start rounded border border-(--ui-border) px-3 py-1 text-sm hover:bg-(--ui-bg-hover)'
+
+function labelled(title, input, hint) {
+  return jsxs('label', {
+    className: 'flex flex-col gap-1',
+    children: [
+      jsx('span', { className: 'font-medium', children: title }),
+      input,
+      hint ? jsx('span', { className: 'text-(--ui-text-tertiary)', children: hint }) : null
+    ]
+  })
+}
+
+// The helper's own name, folders, dashboard address and sign-in, when it runs on this machine.
+// Shows `fallback` (the app's own settings) when it does not.
+function HelperSettings({ fallback, win }) {
+  const [state, setState] = useState({ loading: true })
+  const [form, setForm] = useState({ folders: '', name: '', server: '' })
+  const [login, setLogin] = useState({ password: '', username: '' })
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    let live = true
+
+    ;(async () => {
+      const helper = await probeHelper()
+
+      if (!helper) {
+        return { missing: true }
+      }
+
+      const token = await readHelperToken(helper.home, win)
+
+      if (!token) {
+        return { error: `Could not read the helper's local token in ${helper.home}.` }
+      }
+
+      const config = await helperCall('/config', token)
+      setForm({ folders: (config.folders || []).join('\n'), name: config.name || '', server: config.server || '' })
+
+      return { helper, token }
+    })()
+      .catch(error => ({ error: String(error?.message || error) }))
+      .then(next => live && setState(next))
+
+    return () => {
+      live = false
+    }
+  }, [])
+
+  if (state.loading) {
+    return jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Looking for the background helper…' })
+  }
+
+  if (state.missing) {
+    return fallback
+  }
+
+  if (state.error) {
+    return jsx('div', { className: 'text-(--ui-text-tertiary)', children: state.error })
+  }
+
+  const set = key => e => setForm({ ...form, [key]: e.target.value })
+  const save = async () => {
+    try {
+      const res = await helperCall('/config', state.token, {
+        folders: form.folders.split(/\r?\n/),
+        name: form.name,
+        server: form.server
+      })
+      setMessage(`Saved. ${res.status}`)
+    } catch (error) {
+      setMessage(`Not saved: ${error.message}`)
+    }
+  }
+  const signIn = async () => {
+    try {
+      const res = await helperCall('/login', state.token, login)
+      setLogin({ password: '', username: login.username })
+      setMessage(`Signed in. ${res.status}`)
+    } catch (error) {
+      setMessage(`Not signed in: ${error.message}`)
+    }
+  }
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-4',
+    children: [
+      jsx('div', {
+        className: 'text-(--ui-text-tertiary)',
+        children: `The background helper is running (key ${state.helper.key}). These are its settings.`
+      }),
+      labelled('Device name', jsx('input', { className: FIELD, onChange: set('name'), value: form.name }),
+        'Lowercase letters, digits and dashes. Athena uses this name to aim at this device.'),
+      labelled('Allowed folders (one per line)',
+        jsx('textarea', { className: `${FIELD} min-h-28 font-mono`, onChange: set('folders'), value: form.folders }),
+        'The helper refuses any path outside these, symlinks included. Empty means nothing is allowed.'),
+      labelled('Dashboard address', jsx('input', { className: FIELD, onChange: set('server'), value: form.server })),
+      jsx('button', { className: BUTTON, onClick: save, type: 'button', children: 'Save helper settings' }),
+      jsxs('div', {
+        className: 'flex flex-col gap-2',
+        children: [
+          jsx('span', { className: 'font-medium', children: 'Sign the helper in to the dashboard' }),
+          jsx('input', {
+            autoComplete: 'username',
+            className: FIELD,
+            onChange: e => setLogin({ ...login, username: e.target.value }),
+            placeholder: 'Username',
+            value: login.username
+          }),
+          jsx('input', {
+            autoComplete: 'current-password',
+            className: FIELD,
+            onChange: e => setLogin({ ...login, password: e.target.value }),
+            placeholder: 'Password',
+            type: 'password',
+            value: login.password
+          }),
+          jsx('span', {
+            className: 'text-(--ui-text-tertiary)',
+            children: 'Only needed if it says it is signed out. The password goes to the helper once and is not kept.'
+          }),
+          jsx('button', { className: BUTTON, onClick: signIn, type: 'button', children: 'Sign in' })
+        ]
+      }),
+      message ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: message }) : null
+    ]
+  })
+}
+
 function Settings({ ctx, status }) {
   const win = isWindowsPlatform()
   const [useHelper, setUseHelper] = useState(() => ctx.storage.get('useHelper', true))
   const [name, setName] = useState(() => ctx.storage.get('name', defaultName(win)))
   const [roots, setRoots] = useState(() => ctx.storage.get('roots', ''))
   const saved = parseRoots(roots, win)
-  const field = 'w-full rounded border border-(--ui-border) bg-transparent px-2 py-1 text-sm'
-
-  return jsxs('div', {
-    className: 'flex max-w-xl flex-col gap-4 p-4 text-sm',
+  const field = FIELD
+  const appFields = jsxs('div', {
+    className: 'flex flex-col gap-4',
     children: [
-      jsxs('label', {
-        className: 'flex flex-col gap-1',
-        children: [
-          jsxs('span', {
-            className: 'flex items-center gap-2 font-medium',
-            children: [
-              jsx('input', {
-                checked: useHelper,
-                onChange: e => {
-                  setUseHelper(e.target.checked)
-                  ctx.storage.set('useHelper', e.target.checked)
-                },
-                type: 'checkbox'
-              }),
-              'Use the background helper when it runs on this machine'
-            ]
-          }),
-          jsx('span', {
-            className: 'text-(--ui-text-tertiary)',
-            children:
-              'The helper keeps this machine reachable with the app closed, and its own name and folders apply. ' +
-              'The app then only tells it which chats you have open here. Off: the app does the work itself, with the settings below.'
-          })
-        ]
-      }),
       jsxs('label', {
         className: 'flex flex-col gap-1',
         children: [
@@ -472,6 +599,38 @@ function Settings({ ctx, status }) {
         ]
       }),
       jsx('div', { className: 'text-(--ui-text-tertiary)', children: status() })
+    ]
+  })
+
+  return jsxs('div', {
+    className: 'flex max-w-xl flex-col gap-4 p-4 text-sm',
+    children: [
+      jsxs('label', {
+        className: 'flex flex-col gap-1',
+        children: [
+          jsxs('span', {
+            className: 'flex items-center gap-2 font-medium',
+            children: [
+              jsx('input', {
+                checked: useHelper,
+                onChange: e => {
+                  setUseHelper(e.target.checked)
+                  ctx.storage.set('useHelper', e.target.checked)
+                },
+                type: 'checkbox'
+              }),
+              'Use the background helper when it runs on this machine'
+            ]
+          }),
+          jsx('span', {
+            className: 'text-(--ui-text-tertiary)',
+            children:
+              'The helper keeps this machine reachable with the app closed. The app then only tells it which chats ' +
+              'you have open here. Off: the app does the work itself, with its own name and folders.'
+          })
+        ]
+      }),
+      useHelper ? jsx(HelperSettings, { fallback: appFields, win }) : appFields
     ]
   })
 }

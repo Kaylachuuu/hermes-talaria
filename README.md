@@ -83,8 +83,12 @@ talaria-helper folders add <path>    # or: remove <path>; read again within seco
   (`/talaria approve <name> <key>`); the helper then replaces the app's key for that name.
 - **Folders.** Its own list, in its `config.json`. Every path is checked again after resolving
   symlinks, so a link inside an allowed folder cannot lead out of it, for any operation.
-- **Local port.** It listens on 127.0.0.1:47219 for the Desktop app only (status, and which chats
-  are open). Requests from web pages are refused.
+- **Settings in Desktop.** With the helper running, Talaria's settings in Hermes Desktop show the
+  helper's device name, allowed folders and dashboard address, and a sign-in box for when it is
+  signed out. Saving there writes the helper's `config.json`, the same as the commands above.
+- **Local port.** It listens on 127.0.0.1:47219 for the Desktop app only (status, which chats are
+  open, and its settings). Requests from web pages are refused. Reading or changing settings also
+  needs the `local-token` file in the helper's settings folder, which only this user can read.
 
 **Steering the agent.** On the machine that hosts Hermes, the built-in file and terminal tools reach
 the same disk as Talaria and can look right. So Talaria also adds a short section to each new

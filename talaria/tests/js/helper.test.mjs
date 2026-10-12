@@ -4,9 +4,9 @@ import crypto from 'node:crypto'
 import { test } from 'node:test'
 
 import {
-  Dashboard, allowedOrigin, envelope, newIdentity, normalizePath, openIdentity, shellFor
+  Dashboard, allowedOrigin, applySettings, envelope, newIdentity, normalizePath, openIdentity, shellFor
 } from '../../../helper/talaria-helper.mjs'
-import { probeHelper } from '../../desktop/plugin.js'
+import { helperCall, probeHelper, readHelperToken } from '../../desktop/plugin.js'
 
 test('the helper and the Desktop plugin share the path rules', () => {
   assert.equal(normalizePath('/Users/k/./a/../b', false), '/Users/k/b')
@@ -63,4 +63,37 @@ test('the Desktop plugin finds the helper, or falls back when it is not running'
   const running = async url => ({ json: async () => ({ name: 'mac', status: 'Online' }), ok: url.endsWith('/status') })
   assert.deepEqual(await probeHelper(running), { name: 'mac', status: 'Online' })
   assert.equal(await probeHelper(async () => { throw new Error('ECONNREFUSED') }), null)
+})
+
+test('settings from Desktop are checked before the helper keeps them', () => {
+  const config = { folders: ['/a'], local_port: 1, name: 'mac', server: 'http://h:1' }
+  assert.deepEqual(applySettings(config, { folders: [' /b ', '', '/c'], name: ' MacBook ', server: 'http://10.1.0.98:9119/' }),
+    { folders: ['/b', '/c'], local_port: 1, name: 'macbook', server: 'http://10.1.0.98:9119' })
+  assert.deepEqual(applySettings(config, {}), config)
+  assert.throws(() => applySettings(config, { folders: ['relative'] }), /absolute/)
+  assert.throws(() => applySettings(config, { name: 'has space' }), /lowercase/)
+  assert.throws(() => applySettings(config, { server: 'ftp://h' }), /http/)
+})
+
+test('Desktop reads the local token and sends it with every settings call', async () => {
+  const paths = []
+  const bridge = { readFileText: async p => { paths.push(p); return { text: 'abc123\n' } } }
+  assert.equal(await readHelperToken('/Users/k/Library/Application Support/Talaria', false, bridge), 'abc123')
+  assert.equal(await readHelperToken('C:\\Users\\k\\AppData\\Roaming\\Talaria', true, bridge), 'abc123')
+  assert.deepEqual(paths, ['/Users/k/Library/Application Support/Talaria/local-token',
+    'C:\\Users\\k\\AppData\\Roaming\\Talaria\\local-token'])
+  assert.equal(await readHelperToken('/x', false, undefined), '')
+
+  const seen = []
+  const fetchFn = async (url, init) => {
+    seen.push([url, init.method, init.headers['x-talaria-token'], init.body])
+    return url.endsWith('/bad')
+      ? { json: async () => ({ error: 'nope' }), ok: false, status: 400 }
+      : { json: async () => ({ name: 'mac' }), ok: true, status: 200 }
+  }
+  assert.deepEqual(await helperCall('/config', 'tok', undefined, fetchFn), { name: 'mac' })
+  await helperCall('/config', 'tok', { name: 'x' }, fetchFn)
+  await assert.rejects(helperCall('/bad', 'tok', {}, fetchFn), /nope/)
+  assert.deepEqual(seen[0], ['http://127.0.0.1:47219/config', 'GET', 'tok', undefined])
+  assert.deepEqual(seen[1], ['http://127.0.0.1:47219/config', 'POST', 'tok', '{"name":"x"}'])
 })
