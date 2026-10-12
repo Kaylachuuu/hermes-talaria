@@ -67,6 +67,8 @@ tools act only on the server."
 - The first key to claim a name keeps it until `/talaria forget`. A new key waits for approval:
   the device's status line shows its key, and you type `/talaria approve <name> <key>` in a chat.
   Approval happens only through that command, never through a tool, so the agent cannot approve.
+- If a device is lost, `/talaria revoke <name>` refuses its key from then on and frees its name. The
+  lost device also holds the dashboard login, so change the dashboard password too.
 - The private key is kept in the plugin's storage in the app, not in the OS keychain.
 - Write and run cannot detect a symlink that leads out of an allowed folder. List and read check the
   resolved path.

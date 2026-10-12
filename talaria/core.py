@@ -124,6 +124,8 @@ class DeviceStore:
         self.path = path
         self._lock = threading.RLock()
         self._devices: dict[str, Device] = {}
+        # Keys of lost or stolen devices: refused for good, even if they say hello again.
+        self._revoked: dict[str, dict] = {}
         self._load()
 
     def _load(self) -> None:
@@ -135,6 +137,8 @@ class DeviceStore:
             device = Device(row["device_id"], row["name"], row["public_key"], row["enrolled_at"],
                             approved=bool(row.get("approved", True)))
             self._devices[device.device_id] = device
+        for row in data.get("revoked", []):
+            self._revoked[row["device_id"]] = row
 
     def _save(self) -> None:
         if self.path is None:
@@ -143,7 +147,8 @@ class DeviceStore:
                  "enrolled_at": d.enrolled_at, "approved": d.approved} for d in self._devices.values()]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"devices": rows}, indent=2), encoding="utf-8")
+        tmp.write_text(json.dumps({"devices": rows, "revoked": list(self._revoked.values())}, indent=2),
+                       encoding="utf-8")
         os.replace(tmp, self.path)
 
     def get(self, device_id: str) -> Optional[Device]:
@@ -195,6 +200,22 @@ class DeviceStore:
                 raise TalariaError(f"{device.name} has key {device.device_id[:8]}, not {fingerprint}; "
                                    "not approved")
             device.approved = True
+            self._save()
+            return device
+
+    def is_revoked(self, device_id: str) -> bool:
+        with self._lock:
+            return device_id in self._revoked
+
+    def revoke(self, name: str, now: float) -> Device:
+        """Remove a lost device and refuse its key from now on. Its name is free for a new device."""
+        with self._lock:
+            device = self.by_name(name)
+            if device is None:
+                raise TalariaError(f"no device named {name!r}")
+            del self._devices[device.device_id]
+            self._revoked[device.device_id] = {"device_id": device.device_id, "name": device.name,
+                                               "revoked_at": now}
             self._save()
             return device
 
@@ -261,6 +282,8 @@ class Talaria:
         now = self.clock()
         if abs(now * 1000 - ts) > CLOCK_SKEW_MS:
             raise EnvelopeError("envelope is stale or from the future; check the device clock")
+        if self.store.is_revoked(device_id):
+            raise EnvelopeError("this device was revoked")
         device = self.store.get(device_id)
         if device is not None:
             public_key = b64d(device.public_key)
@@ -380,6 +403,14 @@ class Talaria:
         now = self.clock() if now is None else now
         names = [d.name for d in self.store.all() if d.usable(now)]
         return "Online devices: " + (", ".join(names) if names else "none") + "."
+
+    def cancel_device(self, device_id: str) -> None:
+        """Fail every request waiting on a device, e.g. one just revoked."""
+        with self._lock:
+            for pending in self._pending.values():
+                if pending.device_id == device_id and not pending.done:
+                    pending.ok, pending.result, pending.done = False, "the device was revoked", True
+                    pending.event.set()
 
     def describe_device(self, device: Device) -> str:
         """Where a device's paths live, so the model can retry with a path that fits it."""

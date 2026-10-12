@@ -121,6 +121,15 @@ def _slash(raw: str) -> str:
         if talaria.store.forget(parts[1]):
             return f"Forgot {parts[1]}. It can enroll again by saying hello, and will need approval."
         return f"No device named {parts[1]}."
+    if parts[:1] == ["revoke"] and len(parts) == 2:
+        try:
+            device = talaria.store.revoke(parts[1], talaria.clock())
+        except core.TalariaError as exc:
+            return str(exc)
+        talaria.cancel_device(device.device_id)
+        return (f"Revoked {device.name} (key {device.device_id[:8]}). It is refused from now on and "
+                "its name is free. If the device is lost, also change the dashboard password: "
+                "it is saved on that device too.")
     if parts[:1] == ["approve"] and len(parts) in (2, 3):
         try:
             device = talaria.store.approve(parts[1], parts[2] if len(parts) == 3 else "")
@@ -157,4 +166,5 @@ def register(ctx) -> None:
     )
     ctx.register_command("talaria", handler=_slash,
                          description="List Talaria devices; `approve <name> [key]` to let a new one work, "
-                                     "`forget <name>` to remove one.")
+                                     "`revoke <name>` to lock out a lost one, `forget <name>` to "
+                                     "remove one that may enroll again.")

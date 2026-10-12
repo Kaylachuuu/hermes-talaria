@@ -87,3 +87,15 @@ def test_unenrolled_key_is_forbidden(hermes):
     client, _ = hermes
     r = client.post("/api/plugins/talaria/claim", json=FakeDevice("x").envelope("claim", {"request_id": "r"}))
     assert r.status_code == 403
+
+
+def test_revoke_command_locks_a_device_out(hermes):
+    client, _ = hermes
+    from hermes_cli.plugins import get_plugin_command_handler
+    command = get_plugin_command_handler("talaria")
+    device = FakeDevice("itest-lost")
+    _hello(client, device)
+    assert command("revoke itest-lost").startswith("Revoked itest-lost")
+    payload = {"name": "itest-lost", "platform": "linux", "shell": "bash", "roots": [], "sessions": []}
+    r = client.post("/api/plugins/talaria/hello", json=device.envelope("hello", payload, with_key=True))
+    assert r.status_code == 403

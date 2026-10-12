@@ -14,7 +14,8 @@ The server binds a name to the first key that claims it and keeps the binding in
 `$HERMES_HOME/talaria/devices.json`. `/talaria forget <name>` releases it. A new key is enrolled as
 unapproved: it may say hello, but the server sends it no work and does not offer it as a default until
 the user types `/talaria approve <name> [key fingerprint]`. Devices enrolled before approval existed
-are treated as approved.
+are treated as approved. `/talaria revoke <name>` removes a device and lists its id under
+`revoked` in the same file; every envelope from a revoked id is refused, hello included.
 
 ## Envelopes
 

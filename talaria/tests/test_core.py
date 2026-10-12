@@ -244,3 +244,17 @@ def test_devices_enrolled_before_approval_existed_stay_approved(tmp_path):
     path.write_text(json.dumps({"devices": [{"device_id": "ab" * 16, "name": "old",
                                              "public_key": "", "enrolled_at": 1.0}]}))
     assert core.DeviceStore(path).by_name("old").approved is True
+
+
+def test_revoked_device_is_locked_out_and_its_name_freed(t):
+    lost = FakeDevice()
+    lost.hello(t)
+    t.store.revoke("desk", t.clock())
+    # Its key is refused for good, even saying hello again, and the reload keeps it that way.
+    with pytest.raises(core.EnvelopeError, match="revoked"):
+        lost.hello(t)
+    assert core.DeviceStore(t.store.path).is_revoked(lost.device_id)
+    # The name is free for a new device, which still needs approval.
+    replacement = FakeDevice()
+    assert replacement.hello(t, approve=False)["approved"] is False
+    assert t.store.by_name("desk").device_id == replacement.device_id
