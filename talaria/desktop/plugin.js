@@ -481,7 +481,18 @@ function HelperSettings({ fallback, win }) {
   }
 
   if (state.missing) {
-    return fallback
+    return jsxs('div', {
+      className: 'flex flex-col gap-4',
+      children: [
+        jsx('div', {
+          className: 'text-(--ui-text-tertiary)',
+          children:
+            'The background helper is not running on this machine, so the app does the work with the name and ' +
+            'folders below. Once the helper runs (talaria-helper install), its own settings show here instead.'
+        }),
+        fallback
+      ]
+    })
   }
 
   if (state.error) {
