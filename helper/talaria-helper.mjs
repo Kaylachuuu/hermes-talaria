@@ -32,7 +32,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
-export const VERSION = '0.3.0'
+export const VERSION = '0.3.1'
 const PROTOCOL = 'talaria/1'
 const HELLO_EVERY_MS = 2_000
 const DEFAULT_LOCAL_PORT = 47219
@@ -1836,6 +1836,7 @@ export class Helper {
   }
 
   async run() {
+    this.log(`Starting Talaria helper ${VERSION} (process ${process.pid}).`)
     this.serveLocal()
     let last = ''
 
@@ -2090,11 +2091,7 @@ function install(helper, options = installOptions([])) {
     }
 
     stopWindowsHelper()
-    spawn('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', `& '${node}' '${target}' run`], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    }).unref()
+    startWindowsHelper(node, target)
     console.log('Running in the background, and at every login.')
 
     return
@@ -2118,6 +2115,27 @@ function stopWindowsHelper() {
     "Where-Object { $_.CommandLine -like '*talaria-helper.mjs*run*' -and $_.ProcessId -ne $PID } | " +
     'ForEach-Object { Stop-Process -Id $_.ProcessId -Force }'
   spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true })
+}
+
+// Started through WMI rather than as a child: a terminal (Hermes Desktop's included) puts what it
+// runs in a job that Windows ends together with the terminal's command, background children and all,
+// so a plain detached child dies as soon as the install finishes. WMI starts it outside that job.
+function startWindowsHelper(node, target) {
+  const quote = text => text.replace(/'/g, "''")
+  const line = `"${node}" "${target}" run`
+  const script =
+    "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }; " +
+    `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${quote(line)}'; ` +
+    `CurrentDirectory = '${quote(path.dirname(target))}'; ProcessStartupInformation = $si }; exit $r.ReturnValue`
+  const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    windowsHide: true
+  })
+
+  if (res.status !== 0) {
+    // WMI refused (it can be locked down); a detached child still runs when started from a plain console.
+    spawn(node, [target, 'run'], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+  }
 }
 
 function uninstall() {
