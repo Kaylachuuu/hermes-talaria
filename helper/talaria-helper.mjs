@@ -32,7 +32,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
-export const VERSION = '0.3.2'
+export const VERSION = '0.3.3'
 const PROTOCOL = 'talaria/1'
 const HELLO_EVERY_MS = 2_000
 const DEFAULT_LOCAL_PORT = 47219
@@ -2066,11 +2066,34 @@ function install(helper, options = installOptions([])) {
 `
     )
     const domain = `gui/${process.getuid()}`
-    spawnSync('launchctl', ['bootout', `${domain}/${SERVICE_LABEL}`])
-    const res = spawnSync('launchctl', ['bootstrap', domain, plist], { encoding: 'utf8' })
+    const service = `${domain}/${SERVICE_LABEL}`
+    const loaded = () => spawnSync('launchctl', ['print', service], { stdio: 'ignore' }).status === 0
+    const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+    // bootout returns before the old helper has fully stopped, and bootstrapping while it still
+    // is fails with "Bootstrap failed: 5: Input/output error", so wait for it and retry.
+    spawnSync('launchctl', ['bootout', service])
+
+    for (let i = 0; i < 20 && loaded(); i += 1) {
+      pause(250)
+    }
+
+    let res
+
+    for (let i = 0; i < 4; i += 1) {
+      res = spawnSync('launchctl', ['bootstrap', domain, plist], { encoding: 'utf8' })
+
+      if (res.status === 0) {
+        break
+      }
+
+      pause(1000)
+    }
 
     if (res.status !== 0) {
-      throw new Error(`launchctl: ${res.stderr.trim()}`)
+      // Still loaded after all: restart it in place so it runs the new copy.
+      if (!loaded() || spawnSync('launchctl', ['kickstart', '-k', service]).status !== 0) {
+        throw new Error(`launchctl: ${res.stderr.trim()}`)
+      }
     }
 
     console.log(`Running in the background at login (log: ${log}).`)
