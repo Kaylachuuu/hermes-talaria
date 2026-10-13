@@ -78,10 +78,16 @@ def test_a_new_key_for_a_taken_name_waits_until_approved_by_key(t):
     assert t.resolve_device("desk", []).device_id == old.device_id
     with pytest.raises(core.TalariaError, match="name the key"):
         t.store.approve("desk")
-    approved, replaced = t.store.approve("desk", new.device_id[:8])
-    assert (approved.device_id, replaced.device_id) == (new.device_id, old.device_id)
+    approved, sharing = t.store.approve("desk", new.device_id[:8])
+    assert (approved.device_id, sharing.device_id) == (new.device_id, old.device_id)
+    # Both keys stay approved (the app and its helper take turns); the one seen last does the work.
+    new.hello(t)
     assert t.store.by_name("desk").device_id == new.device_id
-    assert t.store.get(old.device_id) is None
+    old.hello(t)
+    assert t.store.by_name("desk").device_id == old.device_id and t.store.get(old.device_id).approved
+    # Revoking the name locks out every key it has.
+    assert {d.device_id for d in t.store.revoke("desk", t.clock())} == {old.device_id, new.device_id}
+    assert t.store.is_revoked(old.device_id) and t.store.is_revoked(new.device_id)
 
 
 def test_forget_frees_the_name(t):

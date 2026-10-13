@@ -171,11 +171,12 @@ class DeviceStore:
             return self._devices.get(device_id)
 
     def by_name(self, name: str) -> Optional[Device]:
-        """The approved device with this name, else the newest key waiting for it."""
+        """The approved key with this name seen most recently (the Desktop app and its background
+        helper are two keys for one device), else the newest key waiting for it."""
         named = self.named(name)
         approved = [d for d in named if d.approved]
         if approved:
-            return approved[0]
+            return max(approved, key=lambda d: d.last_seen)
         return max(named, key=lambda d: d.enrolled_at) if named else None
 
     def named(self, name: str) -> list[Device]:
@@ -213,9 +214,10 @@ class DeviceStore:
             return device
 
     def approve(self, name: str, fingerprint: str = "") -> tuple[Device, Optional[Device]]:
-        """Approve a waiting key for a name; returns (approved, replaced). With a fingerprint, the
-        key must match the one shown on the device. Replacing an approved device's key, or choosing
-        between several waiting keys, needs the fingerprint."""
+        """Approve a waiting key for a name; returns (approved, sharing): the key that already held
+        the name, if any, which stays approved, so the Desktop app and its background helper can
+        take turns without approving again. With a fingerprint, the key must match the one shown on
+        the device. Adding a key to a held name, or choosing between waiting keys, needs it."""
         fingerprint = fingerprint.strip().lower()
         with self._lock:
             named = self.named(name)
@@ -240,8 +242,6 @@ class DeviceStore:
                                        f"device: /talaria approve {name} <key>")
                 device = waiting[0]
             device.approved = True
-            if holder is not None:
-                del self._devices[holder.device_id]
             self._save()
             return device, holder
 
@@ -249,17 +249,19 @@ class DeviceStore:
         with self._lock:
             return device_id in self._revoked
 
-    def revoke(self, name: str, now: float) -> Device:
-        """Remove a lost device and refuse its key from now on. Its name is free for a new device."""
+    def revoke(self, name: str, now: float) -> list[Device]:
+        """Remove a lost device, every key it has (app and helper), and refuse those keys from now
+        on. Its name is free for a new device."""
         with self._lock:
-            device = self.by_name(name)
-            if device is None:
+            named = self.named(name)
+            if not named:
                 raise TalariaError(f"no device named {name!r}")
-            del self._devices[device.device_id]
-            self._revoked[device.device_id] = {"device_id": device.device_id, "name": device.name,
-                                               "revoked_at": now}
+            for device in named:
+                del self._devices[device.device_id]
+                self._revoked[device.device_id] = {"device_id": device.device_id, "name": device.name,
+                                                   "revoked_at": now}
             self._save()
-            return device
+            return named
 
     def forget(self, name: str) -> bool:
         """Remove every key holding or waiting for this name."""

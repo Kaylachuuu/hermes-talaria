@@ -187,11 +187,13 @@ def _slash(raw: str) -> str:
         return f"No device named {parts[1]}."
     if parts[:1] == ["revoke"] and len(parts) == 2:
         try:
-            device = talaria.store.revoke(parts[1], talaria.clock())
+            devices = talaria.store.revoke(parts[1], talaria.clock())
         except core.TalariaError as exc:
             return str(exc)
-        talaria.cancel_device(device.device_id)
-        return (f"Revoked {device.name} (key {device.device_id[:8]}). It is refused from now on and "
+        for device in devices:
+            talaria.cancel_device(device.device_id)
+        keys = ", ".join(d.device_id[:8] for d in devices)
+        return (f"Revoked {devices[0].name} (key {keys}). It is refused from now on and "
                 "its name is free. If the device is lost, also change the dashboard password: "
                 "it is saved on that device too.")
     if parts[:1] == ["approve"] and len(parts) in (2, 3):
@@ -199,10 +201,11 @@ def _slash(raw: str) -> str:
             device, replaced = talaria.store.approve(parts[1], parts[2] if len(parts) == 3 else "")
         except core.TalariaError as exc:
             return str(exc)
-        if replaced is not None:
-            talaria.cancel_device(replaced.device_id)
-            return (f"Approved {device.name} (key {device.device_id[:8]}); it replaces the old key "
-                    f"{replaced.device_id[:8]}.")
+        if replaced is not None and replaced.device_id != device.device_id:
+            return (f"Approved {device.name} (key {device.device_id[:8]}). It shares the name with key "
+                    f"{replaced.device_id[:8]}, usually the Desktop app and its background helper; "
+                    f"whichever is online does the work. If {replaced.device_id[:8]} is a device you no "
+                    f"longer have, /talaria revoke {device.name} and approve the one you keep.")
         return f"Approved {device.name} (key {device.device_id[:8]})."
     now = talaria.clock()
     lines = [f"{d.name}  {'online' if d.online(now) else 'offline'}"

@@ -78,9 +78,10 @@ talaria-helper folders add <path>    # or: remove <path>; read again within seco
 - **Background.** A LaunchAgent on a Mac, the per-user Run key on Windows (no administrator rights),
   a systemd user service on Linux. It runs from a copy in its settings folder, which the sync
   scripts refresh.
-- **Taking over from the app.** The helper is a new key. If it asks for a name the app already
-  holds, the app keeps that name until you approve the helper with its key
-  (`/talaria approve <name> <key>`); the helper then replaces the app's key for that name.
+- **Sharing a name with the app.** The helper is a second key for the same computer. Approve it
+  once with its key (`/talaria approve <name> <key>`); after that both keys stay approved and
+  whichever is online does the work, so switching between the app and the helper needs no new
+  approval. `/talaria revoke <name>` locks out both.
 - **Folders.** Its own list, in its `config.json`. Every path is checked again after resolving
   symlinks, so a link inside an allowed folder cannot lead out of it, for any operation.
 - **Settings in Desktop.** Talaria's settings in Hermes Desktop have one device name and one list
