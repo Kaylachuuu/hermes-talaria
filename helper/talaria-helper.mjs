@@ -2208,7 +2208,43 @@ async function main(argv) {
   }
 }
 
+// The background service's output goes nowhere on Windows, so `run` also keeps helper.log in the
+// helper's settings folder (Hermes Desktop shows its end when the helper will not stay up).
+function logToFile(home) {
+  const file = path.join(home, 'helper.log')
+
+  try {
+    fs.mkdirSync(home, { recursive: true })
+
+    if (fs.existsSync(file) && fs.statSync(file).size > 1_000_000) {
+      fs.renameSync(file, `${file}.old`)
+    }
+  } catch {
+    return
+  }
+
+  for (const name of ['log', 'error']) {
+    const original = console[name].bind(console)
+    console[name] = (...args) => {
+      original(...args)
+      try {
+        fs.appendFileSync(file, `${new Date().toISOString()} ${args.join(' ')}\n`)
+      } catch {
+        // a full or locked disk must not stop the helper
+      }
+    }
+  }
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(scriptPath())) {
+  if (process.argv[2] === 'run') {
+    logToFile(helperHome())
+    process.on('uncaughtException', error => {
+      console.error(`Stopped: ${error.stack || error.message}`)
+      process.exit(1)
+    })
+  }
+
   main(process.argv.slice(2)).catch(error => {
     console.error(`Stopped: ${error.message}`)
     process.exit(1)

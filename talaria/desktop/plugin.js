@@ -16,6 +16,9 @@ const MAX_OUTPUT_CHARS = 100_000
 const MAX_LIST_ENTRIES = 1000
 // The background helper (helper/talaria-helper.mjs) listens here when it runs on this machine.
 const HELPER_URL = 'http://127.0.0.1:47219'
+const HELPER_LOG = win =>
+  win ? '~/AppData/Roaming/Talaria/helper.log'
+    : /Mac/.test(globalThis.navigator?.platform || '') ? '~/Library/Application Support/Talaria/helper.log' : '~/.config/talaria/helper.log'
 
 // ------------------------------------------------------------------ paths and folder rules
 
@@ -664,7 +667,18 @@ function HelperSection({ ctx, server, setServer, sync, win }) {
   const install = () => act(helper ? 'Updating the helper' : 'Installing the helper', async () => {
     const said = await helperAction(ctx, bridge, win, 'install', { server: address })
 
-    return `${said} If it says it is signed out below, sign it in.`
+    for (let i = 0; i < 16; i += 1) {
+      if (await probeHelper()) {
+        return `${said} If it says it is signed out below, sign it in.`
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+
+    const log = await bridge?.readFileText?.(HELPER_LOG(win)).catch(() => null)
+    const tail = String(log?.text || '').trim().split('\n').slice(-4).join(' / ')
+
+    throw new Error(`it installed, but the helper did not stay running.${tail ? ` Its log ends: ${tail}` : ''}`)
   })
   const remove = () => act('Removing the helper', () => helperAction(ctx, bridge, win, 'uninstall', { home: helper.home }))
   const signIn = () => act('Signing in', async () => {
