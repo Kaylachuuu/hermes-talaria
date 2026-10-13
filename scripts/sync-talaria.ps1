@@ -115,7 +115,11 @@ $helperHome = if ($env:TALARIA_HELPER_HOME) { $env:TALARIA_HELPER_HOME } else { 
 $helperCopy = Join-Path $helperHome "talaria-helper.mjs"
 if ((Test-Path $helperCopy) -and (Test-Path $helperSource) -and
     ((Get-FileHash $helperSource).Hash -ne (Get-FileHash $helperCopy).Hash)) {
-    & node $helperSource install | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "could not update the background helper (node `"$helperSource`" install)" }
-    Write-Host "Background helper updated and restarted."
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        Write-Host "Skipped the background helper: node is not on PATH in this window. If Node was just installed, open a new PowerShell window and run sync-talaria again." -ForegroundColor Yellow
+    } else {
+        & node $helperSource install | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail "could not update the background helper (node `"$helperSource`" install)" }
+        Write-Host "Background helper updated and restarted."
+    }
 }

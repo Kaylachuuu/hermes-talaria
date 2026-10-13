@@ -92,7 +92,9 @@ fi
 HELPER_SRC="$FOLDER/helper/talaria-helper.mjs"
 HELPER_COPY="${TALARIA_HELPER_HOME:-$HOME/Library/Application Support/Talaria}/talaria-helper.mjs"
 if [ -f "$HELPER_COPY" ] && [ -f "$HELPER_SRC" ] && ! cmp -s "$HELPER_SRC" "$HELPER_COPY"; then
-    if command -v node >/dev/null && node "$HELPER_SRC" install >/dev/null; then
+    if ! command -v node >/dev/null; then
+        echo "Skipped the background helper: node is not on PATH in this shell."
+    elif node "$HELPER_SRC" install >/dev/null; then
         echo "Background helper updated and restarted."
     else
         echo "Stopped: could not update the background helper (node \"$HELPER_SRC\" install)."
