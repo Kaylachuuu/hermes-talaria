@@ -95,7 +95,10 @@ def _make_handler(op: str):
                 timeout = max(1, min(core.MAX_RUN_TIMEOUT_S, int(args.get("timeout") or 30)))
                 args["timeout"] = timeout
             result = talaria.dispatch(device, op, args, timeout)
-            return json.dumps({"device": device.name, "result": result})
+            reply = {"device": device.name, "result": result}
+            if name and name.strip().lower() != device.name:
+                reply["note"] = f"There is no device named {name!r}; this ran on {device.name}."
+            return json.dumps(reply)
         except core.TalariaError as exc:
             return _error(str(exc))
     return handler
@@ -159,13 +162,31 @@ _PROMPT = ("Talaria: the user's own computers (their laptop, desktop, Mac and so
            "through the talaria_* tools. The built-in terminal and file tools act on the machine Hermes "
            "runs on, which is not the user's device even when it looks like it. For files, folders or "
            "commands on the user's device, use talaria_*; call talaria_devices to see the devices, "
-           "their folders and which one is the default.")
+           "their folders and which one is the default. The tool names are spelled talaria_ "
+           "(t-a-l-a-r-i-a).")
+
+
+def _prompt(_session=None) -> str:
+    """The steering line, plus the user's devices as they stand when the session starts."""
+    try:
+        talaria = _core().shared()
+        lines = []
+        for d in talaria.store.all():
+            if d.approved:
+                folders = "; ".join(d.roots[:4]) or "none set"
+                lines.append(f"- {d.name} ({d.platform or 'unknown'}): allowed folders {folders}")
+    except Exception:
+        lines = []
+    if not lines:
+        return _PROMPT
+    return (_PROMPT + " The user's devices when this conversation started (names are exact; "
+            "talaria_devices says which are online now):\n" + "\n".join(lines))[:1800]
 
 
 def register(ctx) -> None:
     # Older Hermes builds lack prompt sections; the tool descriptions still steer there.
     if hasattr(ctx, "register_system_prompt_section"):
-        ctx.register_system_prompt_section("talaria.devices", _PROMPT)
+        ctx.register_system_prompt_section("talaria.devices", _prompt)
     for name, (op, description, properties, required) in TOOLS.items():
         ctx.register_tool(
             name=name, toolset="talaria", handler=_make_handler(op),

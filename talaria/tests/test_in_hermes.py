@@ -104,7 +104,11 @@ def test_revoke_command_locks_a_device_out(hermes):
 def test_system_prompt_points_the_agent_at_talaria(hermes):
     from hermes_cli.plugins import get_plugin_manager
     section = get_plugin_manager()._system_prompt_sections.get("talaria.devices")
-    assert section is not None and "talaria_*" in section.content
+    assert section is not None
+    text = section.content({}) if callable(section.content) else section.content
+    assert "talaria_*" in text and "t-a-l-a-r-i-a" in text
+    # Approved devices are named with their folders, so the agent starts with the exact names.
+    assert "- itest-box (linux): allowed folders /tmp" in text
 
 
 # ---------------------------------------------------------------- the background helper, for real

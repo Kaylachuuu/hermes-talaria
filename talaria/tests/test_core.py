@@ -267,3 +267,15 @@ def test_revoked_device_is_locked_out_and_its_name_freed(t):
     replacement = FakeDevice()
     assert replacement.hello(t, approve=False)["approved"] is False
     assert t.store.by_name("desk").device_id == replacement.device_id
+
+
+def test_a_misspelt_name_finds_the_one_close_device(t):
+    FakeDevice("scopuli").hello(t)
+    FakeDevice("anubis").hello(t)
+    assert t.resolve_device("Scopuri", []).name == "scopuli"
+    assert t.resolve_device("anubiss", []).name == "anubis"
+    with pytest.raises(core.TalariaError, match="devices are: anubis, scopuli"):
+        t.resolve_device("macbook", [])
+    FakeDevice("scopula").hello(t)  # two close names: no guess
+    with pytest.raises(core.TalariaError, match="no device named"):
+        t.resolve_device("scopuri", [])

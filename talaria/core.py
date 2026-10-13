@@ -89,6 +89,15 @@ def _verify(public_key: bytes, signature: bytes, message: bytes) -> bool:
 
 # --------------------------------------------------------------------------- devices
 
+def _edit_distance(a: str, b: str) -> int:
+    row = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        prev, row[0] = row[0], i
+        for j, cb in enumerate(b, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (ca != cb))
+    return row[-1]
+
+
 @dataclass
 class Device:
     device_id: str
@@ -409,9 +418,9 @@ class Talaria:
         """The explicit device, else the device this conversation was last used from. Never guesses."""
         now = self.clock()
         if name:
-            device = self.store.by_name(name)
+            device = self.store.by_name(name) or self.close_match(name)
             if device is None:
-                raise TalariaError(f"no device named {name!r}. {self.describe_online(now)}")
+                raise TalariaError(f"no device named {name!r}. {self.describe_devices(now)}")
             if not device.approved:
                 raise TalariaError(f"{device.name} is waiting for approval. The user approves it by "
                                    f"typing /talaria approve {device.name} in a chat. Nothing ran.")
@@ -426,6 +435,22 @@ class Talaria:
             raise TalariaError("this conversation is not open on any device with Talaria, so there is "
                                "no default device. Pass `device`. " + self.describe_online(now))
         return best
+
+    def close_match(self, name: str) -> Optional[Device]:
+        """A misspelt name ("scopuri" for "scopuli"): the one approved device within two edits, if
+        exactly one is. Short names and ties match nothing."""
+        key = name.strip().lower()
+        if len(key) < 4:
+            return None
+        close = [d for d in self.store.all() if d.approved and _edit_distance(key, d.name) <= 2]
+        return close[0] if len(close) == 1 else None
+
+    def describe_devices(self, now: Optional[float] = None) -> str:
+        """Every approved device by its exact name, for an agent that got a name wrong."""
+        now = self.clock() if now is None else now
+        names = [d.name + ("" if d.online(now) else " (offline)") for d in self.store.all() if d.approved]
+        return ("The user's devices are: " + ", ".join(names) + ". Use one of these names exactly."
+                if names else "The user has no approved devices.")
 
     def describe_online(self, now: Optional[float] = None) -> str:
         now = self.clock() if now is None else now
