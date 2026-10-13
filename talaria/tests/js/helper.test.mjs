@@ -4,7 +4,7 @@ import crypto from 'node:crypto'
 import { test } from 'node:test'
 
 import {
-  Dashboard, allowedOrigin, applySettings, envelope, installOptions, newIdentity, normalizePath, openIdentity, shellFor
+  Dashboard, Screen, allowedOrigin, applySettings, browserCandidates, envelope, installOptions, sendKeysFor, sendKeysText, webUrl, newIdentity, normalizePath, openIdentity, shellFor
 } from '../../../helper/talaria-helper.mjs'
 import {
   gatewayAddress, helperCall, helperCommand, helperPlan, probeHelper, readHelperToken
@@ -121,4 +121,27 @@ test('Install and Remove run the helper\'s own commands', async () => {
   assert.equal(await gatewayAddress(bridge({ mode: 'remote', remoteUrl: 'http://10.1.0.98:9119/' })), 'http://10.1.0.98:9119')
   assert.equal(await gatewayAddress(bridge({ mode: 'local', remoteUrl: 'http://x:1' })), '')
   assert.equal(await gatewayAddress(undefined), '')
+})
+
+test('browser addresses are web pages only', () => {
+  assert.equal(webUrl('example.com/a'), 'https://example.com/a')
+  assert.throws(() => webUrl('file:///etc/passwd'), /only http/)
+  assert.throws(() => webUrl('javascript:alert(1)'), /only http/)
+  assert.throws(() => webUrl('https://me:pw@example.com'), /password/)
+  assert.ok(browserCandidates('firefox', 'win32', { PROGRAMFILES: 'C:\\Program Files' })[0].endsWith('Mozilla Firefox\\firefox.exe'))
+  assert.deepEqual(browserCandidates('safari', 'darwin'), ['/usr/bin/safaridriver'])
+  assert.deepEqual(applySettings({}, { browser: true, browser_app: 'edge', screen: 'yes' }), { browser: true, browser_app: 'edge', screen: false })
+  assert.throws(() => applySettings({}, { browser_app: 'netscape' }), /must be one of/)
+})
+
+test('screen coordinates map from the screenshot back to the screen', () => {
+  const screen = new Screen('/tmp', 'win32')
+  assert.throws(() => screen.toScreen([1, 1]), /screenshot first/)
+  screen.geometry = { height: 2160, imageHeight: 720, imageWidth: 1280, width: 3840, x: 0, y: 0 }
+  assert.deepEqual(screen.toScreen([640, 360]), [1920, 1080])
+  assert.throws(() => screen.toScreen([1300, 10]), /inside the 1280x720/)
+  assert.equal(sendKeysFor('ctrl+shift+s'), '^+s')
+  assert.equal(sendKeysFor('enter'), '{ENTER}')
+  assert.equal(sendKeysFor('alt+F4'), '%{F4}')
+  assert.equal(sendKeysText('50% (off) {x}+1'), '50{%} {(}off{)} {{}x{}}{+}1')
 })

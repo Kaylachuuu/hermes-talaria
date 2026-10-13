@@ -112,6 +112,28 @@ the same device list and approvals (kept in the root Hermes home). Requests from
 can run on one device at once; each command gets its own terminal. There is no per-agent limit yet,
 such as one agent allowed only one device.
 
+## Browser and screen
+
+Two more tools, done only by the background helper and only on a device where they are switched on
+in Talaria's settings in Hermes Desktop (both start off):
+
+- **`talaria_browser`** opens a browser window the user can watch, with a profile of its own under
+  the helper's settings folder (never the everyday profile; sites signed in to there stay signed
+  in). Pages come back as text with numbered links, buttons and fields, so models without vision
+  can use it; `screenshot` returns an image as well. Chrome, Edge and Brave are driven over the
+  DevTools protocol, Firefox over WebDriver BiDi, Safari through `safaridriver` (turn on Develop >
+  Allow Remote Automation once). Only http and https pages are opened or read back, addresses with
+  a password in them are refused, and Chrome-family downloads are blocked. Needs Node 22 or later
+  for Chrome, Edge, Brave and Firefox.
+- **`talaria_screen`** takes screenshots of the main screen and clicks, types, presses keys and
+  scrolls, with what the OS already has: PowerShell and .NET on Windows, `screencapture` and
+  JavaScript for Automation on a Mac (allow Screen Recording and Accessibility for the helper),
+  `xdotool` and ImageMagick on Linux X11. Every action returns a fresh screenshot, scaled to 1280
+  pixels wide; coordinates refer to it.
+
+A device lists what it allows (`can` in `talaria_devices`), and the server refuses a browser or
+screen call to a device that does not.
+
 ## What is not done yet
 
 - The first key to claim a name keeps it until `/talaria forget`. A new key waits for approval:

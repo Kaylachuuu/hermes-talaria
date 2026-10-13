@@ -518,6 +518,15 @@ export function helperPlan(current, desired, win) {
     change.server = desired.server
   }
 
+  for (const key of ['browser', 'screen', 'browser_app']) {
+    const want = desired[key]
+    const have = current[key] ?? (key === 'browser_app' ? 'auto' : false)
+
+    if (want !== undefined && want !== have) {
+      change[key] = want
+    }
+  }
+
   return { adopt, change: Object.keys(change).length ? change : null }
 }
 
@@ -568,6 +577,51 @@ function labelled(title, input, hint) {
   return jsxs('label', {
     className: 'flex flex-col gap-1',
     children: [jsx('span', { className: 'font-medium', children: title }), input, hint ? jsx('span', { className: HINT, children: hint }) : null]
+  })
+}
+
+// What the agent may do here beyond the folders. Off until switched on; the helper does the work.
+function Abilities({ ctx, sync }) {
+  const [browser, setBrowser] = useState(() => ctx.storage.get('allowBrowser', false) === true)
+  const [app, setApp] = useState(() => ctx.storage.get('browserApp', 'auto'))
+  const [screen, setScreen] = useState(() => ctx.storage.get('allowScreen', false) === true)
+  const toggle = (key, set) => e => {
+    set(e.target.checked)
+    ctx.storage.set(key, e.target.checked)
+    sync()
+  }
+  const check = (checked, onChange, title, hint) =>
+    jsxs('label', {
+      className: 'flex flex-col gap-1',
+      children: [
+        jsxs('span', { className: 'flex items-center gap-2 font-medium', children: [jsx('input', { checked, onChange, type: 'checkbox' }), title] }),
+        jsx('span', { className: HINT, children: hint })
+      ]
+    })
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-3',
+    children: [
+      check(browser, toggle('allowBrowser', setBrowser), 'Let Athena use a web browser here',
+        'Opens its own browser window with a Talaria-only profile, separate from your everyday one. Sites you sign in to there stay signed in.'),
+      browser
+        ? labelled('Browser',
+          jsx('select', {
+            className: FIELD,
+            onChange: e => {
+              setApp(e.target.value)
+              ctx.storage.set('browserApp', e.target.value)
+              sync()
+            },
+            value: app,
+            children: [['auto', 'The first one installed'], ['chrome', 'Chrome'], ['edge', 'Edge'], ['brave', 'Brave'],
+              ['firefox', 'Firefox'], ['safari', 'Safari (Mac; turn on Develop > Allow Remote Automation)']]
+              .map(([value, label]) => jsx('option', { value, children: label }))
+          }))
+        : null,
+      check(screen, toggle('allowScreen', setScreen), 'Let Athena see and control the screen',
+        'Screenshots, mouse and keyboard on this machine. On a Mac, allow Screen Recording and Accessibility for the helper when asked.')
+    ]
   })
 }
 
@@ -646,6 +700,7 @@ function HelperSection({ ctx, server, setServer, sync, win }) {
         gateway
           ? `Empty uses the gateway this app is bound to (${gateway}).`
           : 'This app uses its own local backend, so type the address of the shared dashboard.'),
+      jsx(Abilities, { ctx, sync }),
       jsxs('div', {
         className: 'flex gap-2',
         children: [
@@ -837,7 +892,10 @@ export default {
       })
       const desired = {
         folders: roots().map(r => toNative(r, win)),
+        browser: ctx.storage.get('allowBrowser', false) === true,
+        browser_app: ctx.storage.get('browserApp', 'auto'),
         name: ctx.storage.get('name', defaultName(win)),
+        screen: ctx.storage.get('allowScreen', false) === true,
         server: ctx.storage.get('server', '') || (await gatewayAddress(bridge))
       }
       const plan = helperPlan(current, desired, win)

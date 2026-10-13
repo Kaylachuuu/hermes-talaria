@@ -279,3 +279,14 @@ def test_a_misspelt_name_finds_the_one_close_device(t):
     FakeDevice("scopula").hello(t)  # two close names: no guess
     with pytest.raises(core.TalariaError, match="no device named"):
         t.resolve_device("scopuri", [])
+
+
+def test_browser_and_screen_go_only_to_devices_that_allow_them(t):
+    FakeDevice("desk").hello(t)
+    FakeDevice("helper").hello(t, abilities=["files", "browser"])
+    desk, helper = t.store.by_name("desk"), t.store.by_name("helper")
+    assert desk.abilities == ["files"] and helper.public(t.clock())["can"] == ["files", "browser"]
+    with pytest.raises(core.TalariaError, match="desk does not allow the browser.*Devices that allow it: helper"):
+        t.dispatch(desk, "browser", {"action": "snapshot"}, 5)
+    with pytest.raises(core.TalariaError, match="helper does not allow the screen"):
+        t.dispatch(helper, "screen", {"action": "screenshot"}, 5)

@@ -114,6 +114,7 @@ def test_system_prompt_points_the_agent_at_talaria(hermes):
 # ---------------------------------------------------------------- the background helper, for real
 
 HELPER = Path(__file__).resolve().parents[2] / "helper" / "talaria-helper.mjs"
+CHROMIUM = Path(os.environ.get("TALARIA_TEST_CHROMIUM", "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"))
 
 
 def _free_port():
@@ -147,10 +148,12 @@ def helper(hermes, tmp_path_factory):
     (allowed / "escape-dir").symlink_to(outside)
     (home / "config.json").write_text(json.dumps({
         "server": f"http://127.0.0.1:{port}", "name": "itest-helper", "folders": [str(allowed)],
-        "local_port": local_port}))
+        "local_port": local_port, "browser": True}))
     (home / "secrets.json").write_text(json.dumps({"token": "test-token"}))
     env = dict(os.environ, TALARIA_HELPER_HOME=str(home), TALARIA_HELPER_SECRETS="file",
-               SHELL="/bin/sh")
+               SHELL="/bin/sh", TALARIA_BROWSER_HEADLESS="1")
+    if CHROMIUM.exists():
+        env["TALARIA_BROWSER"] = str(CHROMIUM)
     proc = subprocess.Popen(["node", str(HELPER), "run"], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     yield {"allowed": allowed, "outside": outside, "local": f"http://127.0.0.1:{local_port}", "home": home,
@@ -254,3 +257,45 @@ def test_desktop_can_fetch_the_helper_to_install(hermes):
     client, _ = hermes
     body = client.get("/api/plugins/talaria/helper").json()
     assert body["version"] and "talaria-helper" in body["source"]
+
+
+def test_helper_drives_a_browser_and_hands_back_screenshots(hermes, helper):
+    import http.server
+    import json
+    if not CHROMIUM.exists():
+        pytest.skip("no Chromium to drive")
+    _, registry = hermes
+    talaria = __import__("sys").modules["hermes_talaria_core"].shared()
+    device = _wait_for(lambda: talaria.store.by_name("itest-helper"), "the helper's hello")
+    if not device.approved:
+        talaria.store.approve("itest-helper", device.device_id[:8])
+    _wait_for(lambda: "browser" in talaria.store.by_name("itest-helper").abilities, "the browser ability")
+
+    class Page(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = (b"<title>Shop</title><h1>Cart</h1><a href='/paid'>Pay now</a>" if self.path == "/"
+                    else b"<title>Paid</title><p>Thanks for paying</p>")
+            self.send_response(200)
+            self.send_header("content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    site = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Page)
+    threading.Thread(target=site.serve_forever, daemon=True).start()
+    browse = registry.get_entry("talaria_browser").handler
+    try:
+        opened = json.loads(browse({"action": "open", "url": f"http://127.0.0.1:{site.server_port}/",
+                                    "device": "itest-helper"}))["result"]
+        assert opened["title"] == "Shop" and '[1] link "Pay now"' in opened["text"]
+        paid = json.loads(browse({"action": "click", "ref": 1, "device": "itest-helper"}))["result"]
+        assert paid["title"] == "Paid" and "Thanks for paying" in paid["text"]
+        shot = browse({"action": "screenshot", "device": "itest-helper"})
+        assert shot["_multimodal"] and shot["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+        refused = json.loads(browse({"action": "open", "url": "file:///etc/passwd", "device": "itest-helper"}))
+        assert "only http and https" in refused["error"]
+    finally:
+        browse({"action": "close", "device": "itest-helper"})
+        site.shutdown()

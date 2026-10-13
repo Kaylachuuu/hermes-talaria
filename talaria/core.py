@@ -38,7 +38,9 @@ CLAIM_TIMEOUT_S = 12.0
 #: Extra time after a command's own timeout before the server gives up on the result.
 RESULT_GRACE_S = 5.0
 MAX_RUN_TIMEOUT_S = 120
-OPS = ("list", "read", "write", "run")
+OPS = ("list", "read", "write", "run", "browser", "screen")
+# Operations a device does only when it says it can (the background helper, switched on there).
+ABILITY_OPS = {"browser": "browser", "screen": "screen"}
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 
 
@@ -111,6 +113,7 @@ class Device:
     platform: str = ""
     shell: str = ""
     roots: list = field(default_factory=list)
+    abilities: list = field(default_factory=lambda: ["files"])
     # Runtime session id -> the last time this device showed it focused or sent a message in it.
     sessions: dict = field(default_factory=dict)
 
@@ -123,7 +126,8 @@ class Device:
     def public(self, now: float) -> dict:
         return {"name": self.name, "device_id": self.device_id, "online": self.online(now),
                 "approved": self.approved, "platform": self.platform, "shell": self.shell,
-                "allowed_folders": list(self.roots), "fingerprint": self.device_id[:8]}
+                "allowed_folders": list(self.roots), "fingerprint": self.device_id[:8],
+                "can": list(self.abilities)}
 
 
 class DeviceStore:
@@ -362,6 +366,9 @@ class Talaria:
         device.last_seen = now
         device.platform = str(payload.get("platform") or "")[:40]
         device.shell = str(payload.get("shell") or "")[:40]
+        abilities = payload.get("abilities")
+        device.abilities = ([str(a)[:20] for a in abilities[:8]] if isinstance(abilities, list)
+                            else ["files"])
         roots = payload.get("roots")
         device.roots = [str(r)[:400] for r in roots[:32]] if isinstance(roots, list) else []
         for claim in payload.get("sessions") or []:
@@ -479,6 +486,13 @@ class Talaria:
             raise TalariaError(f"{device.name} is waiting for approval; nothing ran.")
         if not device.online(self.clock()):
             raise TalariaError(f"{device.name} is offline. {self.describe_online()}")
+        ability = ABILITY_OPS.get(op)
+        if ability and ability not in device.abilities:
+            able = [d.name for d in self.store.all() if d.usable(self.clock()) and ability in d.abilities]
+            raise TalariaError(
+                f"{device.name} does not allow the {ability}. It needs the Talaria background helper "
+                f"with the {ability} switched on in Talaria's settings there. Nothing ran. "
+                + (f"Devices that allow it: {', '.join(able)}." if able else "No online device allows it."))
         request_id = secrets.token_hex(16)
         pending = Pending(request_id, device.device_id, op, args, timeout, self.clock(),
                           request_digest(request_id, op, args))
@@ -497,8 +511,8 @@ class Talaria:
                 raise TalariaError(f"{device.name} did not answer within {int(timeout)}s; it may still "
                                    "be running. Asked the device to stop it.")
             if not pending.ok:
-                raise TalariaError(f"{device.name} refused or failed: {pending.result}. "
-                                   f"{self.describe_device(device)}")
+                hint = "" if op in ABILITY_OPS else f" {self.describe_device(device)}"
+                raise TalariaError(f"{device.name} refused or failed: {pending.result}.{hint}")
             return pending.result
         finally:
             with self._lock:

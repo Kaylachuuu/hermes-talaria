@@ -75,6 +75,63 @@ TOOLS = {
                      "device": _DEVICE}, ["command", "cwd"]),
 }
 
+_BROWSER = ("Talaria: drives a web browser on the user's own computer (a Chrome or Edge window they "
+            "can watch, with its own Talaria profile), never on the server. Only devices whose "
+            "talaria_devices entry lists \"browser\" under `can` allow it. Every action returns the "
+            "page as text: links, buttons and fields are numbered like [3]; pass that number as `ref`. "
+            "Numbers change after each action, so use the ones from the latest result. Actions: "
+            "open (url), snapshot, click (ref), type (ref, text, submit), select (ref, text: the "
+            "option), press (key, e.g. Enter, Tab, Escape, ctrl+a), scroll (direction up/down), back, "
+            "screenshot (an image of the page), close.")
+_BROWSER_PARAMS = {
+    "action": {"type": "string", "enum": ["open", "snapshot", "click", "type", "select", "press",
+                                          "scroll", "back", "screenshot", "close"]},
+    "url": {"type": "string", "description": "open: the address."},
+    "ref": {"type": "integer", "description": "click/type/select: the element's number from the "
+                                              "latest page text."},
+    "text": {"type": "string", "description": "type: the text; select: the option to pick."},
+    "submit": {"type": "boolean", "description": "type: press Enter afterwards."},
+    "key": {"type": "string", "description": "press: the key or combination."},
+    "direction": {"type": "string", "enum": ["up", "down"]},
+    "browser": {"type": "string", "enum": ["chrome", "edge", "brave", "firefox", "safari"],
+                "description": "Only if the user asks for a particular browser; otherwise the "
+                               "device's chosen one."},
+    "device": _DEVICE,
+}
+
+_SCREEN = ("Talaria: sees and controls the screen of the user's own computer (mouse and keyboard), "
+           "never the server. Only devices whose talaria_devices entry lists \"screen\" under `can` "
+           "allow it. Every action returns a fresh screenshot. Coordinates are [x, y] pixels in the "
+           "latest screenshot (its `size` says how big it is), so take a screenshot first. Actions: "
+           "screenshot, click (coordinate), double_click (coordinate), right_click (coordinate), "
+           "scroll (coordinate, direction up/down, amount), type (text), key (keys, e.g. enter, "
+           "ctrl+c, cmd+space, alt+tab), wait (seconds). For web pages prefer talaria_browser, which "
+           "reads pages as text.")
+_SCREEN_PARAMS = {
+    "action": {"type": "string", "enum": ["screenshot", "click", "double_click", "right_click", "scroll",
+                                          "type", "key", "wait"]},
+    "coordinate": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2,
+                   "description": "[x, y] in the latest screenshot."},
+    "text": {"type": "string", "description": "type: the text to type."},
+    "keys": {"type": "string", "description": "key: a key or combination joined with +."},
+    "direction": {"type": "string", "enum": ["up", "down"]},
+    "amount": {"type": "integer", "minimum": 1, "maximum": 20, "description": "scroll: wheel ticks."},
+    "seconds": {"type": "number", "minimum": 0, "maximum": 10},
+    "device": _DEVICE,
+}
+
+
+def _image_result(device: str, result: dict):
+    """A result carrying a screenshot, in the shape Hermes hands to vision models (and summarises
+    as text for the rest)."""
+    image = result.pop("image", None)
+    text = json.dumps({"device": device, "result": result})
+    if not isinstance(image, dict) or not image.get("data"):
+        return text
+    url = f"data:{image.get('media_type') or 'image/png'};base64,{image['data']}"
+    return {"_multimodal": True, "text_summary": text,
+            "content": [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]}
+
 
 def _error(message: str) -> str:
     return json.dumps({"error": message, "ran_on_server": False})
@@ -94,7 +151,11 @@ def _make_handler(op: str):
             if op == "run":
                 timeout = max(1, min(core.MAX_RUN_TIMEOUT_S, int(args.get("timeout") or 30)))
                 args["timeout"] = timeout
+            elif op in ("browser", "screen"):
+                timeout = 60
             result = talaria.dispatch(device, op, args, timeout)
+            if isinstance(result, dict) and "image" in result:
+                return _image_result(device.name, result)
             reply = {"device": device.name, "result": result}
             if name and name.strip().lower() != device.name:
                 reply["note"] = f"There is no device named {name!r}; this ran on {device.name}."
@@ -174,7 +235,9 @@ def _prompt(_session=None) -> str:
         for d in talaria.store.all():
             if d.approved:
                 folders = "; ".join(d.roots[:4]) or "none set"
-                lines.append(f"- {d.name} ({d.platform or 'unknown'}): allowed folders {folders}")
+                extra = [a for a in d.abilities if a != "files"]
+                lines.append(f"- {d.name} ({d.platform or 'unknown'}): allowed folders {folders}"
+                             + (f"; also allows: {', '.join(extra)}" if extra else ""))
     except Exception:
         lines = []
     if not lines:
@@ -194,6 +257,18 @@ def register(ctx) -> None:
                     "parameters": {"type": "object", "properties": properties, "required": required,
                                    "additionalProperties": False}},
         )
+    ctx.register_tool(
+        name="talaria_browser", toolset="talaria", handler=_make_handler("browser"),
+        schema={"name": "talaria_browser", "description": _BROWSER,
+                "parameters": {"type": "object", "properties": _BROWSER_PARAMS, "required": ["action"],
+                               "additionalProperties": False}},
+    )
+    ctx.register_tool(
+        name="talaria_screen", toolset="talaria", handler=_make_handler("screen"),
+        schema={"name": "talaria_screen", "description": _SCREEN,
+                "parameters": {"type": "object", "properties": _SCREEN_PARAMS, "required": ["action"],
+                               "additionalProperties": False}},
+    )
     ctx.register_tool(
         name="talaria_devices", toolset="talaria", handler=_devices,
         schema={"name": "talaria_devices",
