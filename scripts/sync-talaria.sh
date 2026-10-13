@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bring Talaria up to date on a Mac whose Hermes Desktop connects to a remote backend: pull
-# hermes-talaria into ~/Documents/Github Repos/hermes/talaria (cloning it if missing), copy the device half
+# hermes-talaria into ~/Documents/Github Repos/hermes-talaria (cloning it if missing), copy the device half
 # into Hermes Desktop's plugin folder, and refresh the background helper if it is installed. The backend
 # half lives on the server and is not touched.
 #
@@ -41,9 +41,9 @@ if [ -n "$INSTALL" ]; then
     fi
 fi
 
-# Kept at hermes/talaria on both machines; a checkout named hermes-talaria is found too.
-FOLDER="$ROOT/hermes/talaria"
-[ ! -d "$FOLDER" ] && [ -d "$ROOT/hermes-talaria/.git" ] && FOLDER="$ROOT/hermes-talaria"
+# Github Repos/hermes-talaria, or an older checkout at Github Repos/hermes/talaria if that is there.
+FOLDER="$ROOT/hermes-talaria"
+[ ! -d "$FOLDER" ] && [ -d "$ROOT/hermes/talaria/.git" ] && FOLDER="$ROOT/hermes/talaria"
 mkdir -p "$(dirname "$FOLDER")"
 
 if [ -n "$INSTALL" ]; then

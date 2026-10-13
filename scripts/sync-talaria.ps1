@@ -3,7 +3,8 @@
     Bring Talaria up to date on a Windows machine.
 
 .DESCRIPTION
-    1. Pulls hermes-talaria into Documents\Github Repos\hermes\talaria, or clones it there if missing.
+    1. Pulls hermes-talaria into Documents\Github Repos\hermes-talaria, or clones it there if missing
+       (an older checkout at Documents\Github Repos\hermes\talaria is used if that is there).
        Stops if that folder has changes that are not committed, so nothing of yours is overwritten.
     2. Copies the device half (talaria\desktop\plugin.js) into Hermes Desktop's plugin folder,
        <Hermes home>\desktop-plugins\talaria, when it changed. Press Rescan in Desktop afterwards.
@@ -34,7 +35,10 @@ $ErrorActionPreference = "Stop"
 
 $url = "https://github.com/Kaylachuuu/hermes-talaria.git"
 $repos = if ($env:GITHUB_REPOS) { $env:GITHUB_REPOS } else { Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Github Repos" }
-$project = Join-Path (Join-Path $repos "hermes") "talaria"
+# Github Repos\hermes-talaria, or an older checkout at Github Repos\hermes\talaria if that is there.
+$project = Join-Path $repos "hermes-talaria"
+$older = Join-Path (Join-Path $repos "hermes") "talaria"
+if (-not (Test-Path $project) -and (Test-Path (Join-Path $older ".git"))) { $project = $older }
 $hermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:LOCALAPPDATA "hermes" }
 $target = Join-Path (Join-Path $hermesHome "desktop-plugins") "talaria"
 $task = "Hermes Dashboard"
