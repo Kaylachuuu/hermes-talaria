@@ -114,6 +114,8 @@ class Device:
     shell: str = ""
     roots: list = field(default_factory=list)
     abilities: list = field(default_factory=lambda: ["files"])
+    # False for the Desktop app alone and helpers older than 0.3, which never say what they allow.
+    reports_abilities: bool = False
     # Runtime session id -> the last time this device showed it focused or sent a message in it.
     sessions: dict = field(default_factory=dict)
 
@@ -367,8 +369,8 @@ class Talaria:
         device.platform = str(payload.get("platform") or "")[:40]
         device.shell = str(payload.get("shell") or "")[:40]
         abilities = payload.get("abilities")
-        device.abilities = ([str(a)[:20] for a in abilities[:8]] if isinstance(abilities, list)
-                            else ["files"])
+        device.reports_abilities = isinstance(abilities, list)
+        device.abilities = [str(a)[:20] for a in abilities[:8]] if device.reports_abilities else ["files"]
         roots = payload.get("roots")
         device.roots = [str(r)[:400] for r in roots[:32]] if isinstance(roots, list) else []
         for claim in payload.get("sessions") or []:
@@ -489,9 +491,14 @@ class Talaria:
         ability = ABILITY_OPS.get(op)
         if ability and ability not in device.abilities:
             able = [d.name for d in self.store.all() if d.usable(self.clock()) and ability in d.abilities]
+            why = (f"{device.name} has the {ability} switched off. The user switches it on in Talaria's "
+                   "settings in Hermes Desktop on that device."
+                   if device.reports_abilities else
+                   f"{device.name} runs Talaria without {ability} support: the Desktop app alone, or a "
+                   "background helper older than 0.3. The user presses Update helper (or Install helper) "
+                   f"in Talaria's settings there, then switches the {ability} on.")
             raise TalariaError(
-                f"{device.name} does not allow the {ability}. It needs the Talaria background helper "
-                f"with the {ability} switched on in Talaria's settings there. Nothing ran. "
+                f"{device.name} does not allow the {ability}. {why} Nothing ran. "
                 + (f"Devices that allow it: {', '.join(able)}." if able else "No online device allows it."))
         request_id = secrets.token_hex(16)
         pending = Pending(request_id, device.device_id, op, args, timeout, self.clock(),
