@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { test } from 'node:test'
 
 import plugin, {
-  allowedPath, extractOutput, isWithin, normalizePath, parseRoots, perform, shellFamily, wrapCommand
+  allowedPath, deviceNameFrom, extractOutput, isWithin, normalizePath, parseRoots, perform, shellFamily, wrapCommand
 } from '../../desktop/plugin.js'
 
 test('paths normalise and stay inside the allowed folders', () => {
@@ -127,4 +127,11 @@ test('the settings page renders, with the helper section', () => {
     assert.ok(texts.includes(text), text)
   }
   delete globalThis.window
+})
+
+test('the computer\'s name becomes the default device name', () => {
+  assert.equal(deviceNameFrom('ANUBIS\r'), 'anubis')
+  assert.equal(deviceNameFrom('Kaylas-MacBook-Pro.local'), 'kaylas-macbook-pro')
+  assert.equal(deviceNameFrom('DESKTOP_7Q2 X'), 'desktop-7q2-x')
+  assert.equal(deviceNameFrom(''), '')
 })

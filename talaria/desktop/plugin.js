@@ -392,6 +392,57 @@ function defaultName(win) {
   return win ? 'windows-desktop' : 'this-device'
 }
 
+// A computer name as a device name: "ANUBIS" -> "anubis", "Kaylas-MacBook.local" -> "kaylas-macbook".
+export function deviceNameFrom(hostname) {
+  return String(hostname || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\..*$/, '')
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32)
+}
+
+// The renderer cannot ask the OS for the computer's name, so ask a shell of the app's own.
+async function computerName(bridge, win) {
+  const terminal = bridge?.terminal
+
+  if (!terminal) {
+    return ''
+  }
+
+  const started = await terminal.start({ cols: 200, rows: 50 })
+  const family = shellFamily(started?.shell)
+  const id = Math.random().toString(36).slice(2, 12)
+  let buffer = ''
+  let dispose = () => {}
+
+  try {
+    if (family === 'ssh' || family === 'cmd') {
+      return ''
+    }
+
+    return await new Promise(resolve => {
+      const timer = setTimeout(() => resolve(''), 10_000)
+      dispose = terminal.onData(started.id, chunk => {
+        buffer += String(chunk ?? '')
+        const done = extractOutput(buffer, id)
+
+        if (done) {
+          clearTimeout(timer)
+          resolve(done.exitCode === 0 ? deviceNameFrom(done.output.split('\n').at(-1)) : '')
+        }
+      })
+      Promise.resolve(terminal.attach(started.id))
+        .then(() => terminal.write(started.id, wrapCommand(win ? '$env:COMPUTERNAME' : 'hostname', id, family)))
+        .catch(() => resolve(''))
+    })
+  } finally {
+    dispose()
+    await terminal.dispose(started.id).catch(() => {})
+  }
+}
+
 // The helper's status if it is running on this machine, else null.
 export async function probeHelper(fetchFn = globalThis.fetch) {
   try {
@@ -861,7 +912,16 @@ export default {
 
     ctx.setInterval(hello, HELLO_EVERY_MS)
     loadIdentity(ctx.storage)
-      .then(loaded => {
+      .then(async loaded => {
+        // A device that was never named takes the computer's name.
+        if (ctx.storage.get('name', null) === null) {
+          const found = await computerName(bridge, win).catch(() => '')
+
+          if (found) {
+            ctx.storage.set('name', found)
+          }
+        }
+
         identity = loaded
         hello()
       })
