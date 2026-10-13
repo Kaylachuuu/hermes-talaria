@@ -85,6 +85,13 @@ def test_a_new_key_for_a_taken_name_waits_until_approved_by_key(t):
     assert t.store.by_name("desk").device_id == new.device_id
     old.hello(t)
     assert t.store.by_name("desk").device_id == old.device_id and t.store.get(old.device_id).approved
+    # The Desktop app and the helper say which they are; while both are online the helper answers.
+    old.hello(t, kind="app")
+    new.hello(t, kind="helper")
+    old.hello(t, kind="app")
+    assert t.store.by_name("desk").device_id == new.device_id
+    assert t.store.by_name("desk").label() == "desk (helper)"
+    assert core.DeviceStore(t.store.path).get(old.device_id).kind == "app"  # persisted
     # Revoking the name locks out every key it has.
     assert {d.device_id for d in t.store.revoke("desk", t.clock())} == {old.device_id, new.device_id}
     assert t.store.is_revoked(old.device_id) and t.store.is_revoked(new.device_id)

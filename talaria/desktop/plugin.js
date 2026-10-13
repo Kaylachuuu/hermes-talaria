@@ -953,6 +953,7 @@ export default {
         const name = ctx.storage.get('name', defaultName(win))
         const payload = {
           name,
+          kind: 'app',
           platform: win ? 'windows' : String(globalThis.navigator?.platform || ''),
           roots: roots().map(r => toNative(r, win)),
           sessions: [...sessions.entries()].map(([session_id, at]) => ({ at, session_id })),

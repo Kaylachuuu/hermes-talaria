@@ -32,7 +32,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
-export const VERSION = '0.3.1'
+export const VERSION = '0.3.2'
 const PROTOCOL = 'talaria/1'
 const HELLO_EVERY_MS = 2_000
 const DEFAULT_LOCAL_PORT = 47219
@@ -1621,6 +1621,7 @@ export class Helper {
     const config = this.config
     const payload = {
       name: String(config.name || '').trim().toLowerCase(),
+      kind: 'helper',
       platform: WIN ? 'windows' : process.platform,
       roots: this.roots().map(r => toNative(r)),
       sessions: [...this.sessions.entries()].map(([session_id, at]) => ({ at, session_id })),

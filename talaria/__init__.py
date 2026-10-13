@@ -173,8 +173,23 @@ def _devices(args: dict, **kwargs) -> str:
         default = talaria.resolve_device(None, _conversation_session_ids()).name
     except core.TalariaError:
         default = None
-    return json.dumps({"devices": [d.public(now) for d in talaria.store.all()],
+    return json.dumps({"devices": _one_per_name(talaria, now),
                        "default_for_this_conversation": default})
+
+
+def _one_per_name(talaria, now: float) -> list:
+    """One entry per device name: the key that answers for it, with every key it has (the Desktop
+    app and the background helper are two keys for one computer) listed under `keys`."""
+    entries = []
+    for name in dict.fromkeys(d.name for d in talaria.store.all()):
+        named = talaria.store.named(name)
+        entry = talaria.store.by_name(name).public(now)
+        entry["online"] = any(d.usable(now) for d in named) or entry["online"]
+        if len(named) > 1:
+            entry["keys"] = [{"kind": d.kind or "unknown", "fingerprint": d.device_id[:8],
+                              "online": d.online(now), "approved": d.approved} for d in named]
+        entries.append(entry)
+    return entries
 
 
 def _slash(raw: str) -> str:
@@ -202,13 +217,13 @@ def _slash(raw: str) -> str:
         except core.TalariaError as exc:
             return str(exc)
         if replaced is not None and replaced.device_id != device.device_id:
-            return (f"Approved {device.name} (key {device.device_id[:8]}). It shares the name with key "
-                    f"{replaced.device_id[:8]}, usually the Desktop app and its background helper; "
-                    f"whichever is online does the work. If {replaced.device_id[:8]} is a device you no "
-                    f"longer have, /talaria revoke {device.name} and approve the one you keep.")
-        return f"Approved {device.name} (key {device.device_id[:8]})."
+            return (f"Approved {device.label()} (key {device.device_id[:8]}). It shares the name with "
+                    f"{replaced.label()} (key {replaced.device_id[:8]}); whichever is online does the "
+                    f"work. If {replaced.device_id[:8]} is a device you no longer have, /talaria revoke "
+                    f"{device.name} and approve the one you keep.")
+        return f"Approved {device.label()} (key {device.device_id[:8]})."
     now = talaria.clock()
-    lines = [f"{d.name}  {'online' if d.online(now) else 'offline'}"
+    lines = [f"{d.label()}  {'online' if d.online(now) else 'offline'}"
              f"{'' if d.approved else '  WAITING FOR APPROVAL'}  key {d.device_id[:8]}  "
              f"folders: {', '.join(d.roots) or 'none'}"
              for d in talaria.store.all()]
@@ -235,7 +250,8 @@ def _prompt(_session=None) -> str:
     try:
         talaria = _core().shared()
         lines = []
-        for d in talaria.store.all():
+        for name in dict.fromkeys(d.name for d in talaria.store.all() if d.approved):
+            d = talaria.store.by_name(name)
             if d.approved:
                 folders = "; ".join(d.roots[:4]) or "none set"
                 extra = [a for a in d.abilities if a != "files"]

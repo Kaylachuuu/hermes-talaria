@@ -81,7 +81,8 @@ talaria-helper folders add <path>    # or: remove <path>; read again within seco
 - **Sharing a name with the app.** The helper is a second key for the same computer. Approve it
   once with its key (`/talaria approve <name> <key>`); after that both keys stay approved and
   whichever is online does the work, so switching between the app and the helper needs no new
-  approval. `/talaria revoke <name>` locks out both.
+  approval; while both are online the helper answers. `/talaria devices` and approvals label each
+  key `(app)` or `(helper)`. `/talaria revoke <name>` locks out both.
 - **Folders.** Its own list, in its `config.json`. Every path is checked again after resolving
   symlinks, so a link inside an allowed folder cannot lead out of it, for any operation.
 - **Settings in Desktop.** Talaria's settings in Hermes Desktop have one device name and one list

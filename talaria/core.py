@@ -116,6 +116,9 @@ class Device:
     abilities: list = field(default_factory=lambda: ["files"])
     # False for the Desktop app alone and helpers older than 0.3, which never say what they allow.
     reports_abilities: bool = False
+    # "app" (Hermes Desktop's plugin) or "helper" (the background helper): one computer can hold its
+    # name with both keys. Empty for keys that have not said since this was added.
+    kind: str = ""
     # Runtime session id -> the last time this device showed it focused or sent a message in it.
     sessions: dict = field(default_factory=dict)
 
@@ -129,7 +132,11 @@ class Device:
         return {"name": self.name, "device_id": self.device_id, "online": self.online(now),
                 "approved": self.approved, "platform": self.platform, "shell": self.shell,
                 "allowed_folders": list(self.roots), "fingerprint": self.device_id[:8],
-                "can": list(self.abilities)}
+                "can": list(self.abilities), "kind": self.kind}
+
+    def label(self) -> str:
+        """The name, with which of the computer's keys this is when it has said, e.g. "macbook (helper)"."""
+        return f"{self.name} ({self.kind})" if self.kind else self.name
 
 
 class DeviceStore:
@@ -150,16 +157,22 @@ class DeviceStore:
         for row in data.get("devices", []):
             # Rows from before approval existed were trusted on first use; keep them working.
             device = Device(row["device_id"], row["name"], row["public_key"], row["enrolled_at"],
-                            approved=bool(row.get("approved", True)))
+                            approved=bool(row.get("approved", True)), kind=str(row.get("kind") or ""))
             self._devices[device.device_id] = device
         for row in data.get("revoked", []):
             self._revoked[row["device_id"]] = row
+
+    def touch(self) -> None:
+        """Persist a change made to a device in place."""
+        with self._lock:
+            self._save()
 
     def _save(self) -> None:
         if self.path is None:
             return
         rows = [{"device_id": d.device_id, "name": d.name, "public_key": d.public_key,
-                 "enrolled_at": d.enrolled_at, "approved": d.approved} for d in self._devices.values()]
+                 "enrolled_at": d.enrolled_at, "approved": d.approved, "kind": d.kind}
+                for d in self._devices.values()]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"devices": rows, "revoked": list(self._revoked.values())}, indent=2),
@@ -171,12 +184,15 @@ class DeviceStore:
             return self._devices.get(device_id)
 
     def by_name(self, name: str) -> Optional[Device]:
-        """The approved key with this name seen most recently (the Desktop app and its background
-        helper are two keys for one device), else the newest key waiting for it."""
+        """The approved key that answers for this name, else the newest key waiting for it. The Desktop
+        app and its background helper are two keys for one computer: of the keys online, the helper
+        answers (it can do more), else the one seen last."""
         named = self.named(name)
         approved = [d for d in named if d.approved]
         if approved:
-            return max(approved, key=lambda d: d.last_seen)
+            newest = max(d.last_seen for d in approved)
+            return max(approved, key=lambda d: (d.last_seen > newest - ONLINE_WINDOW_S,
+                                                d.kind == "helper", d.last_seen))
         return max(named, key=lambda d: d.enrolled_at) if named else None
 
     def named(self, name: str) -> list[Device]:
@@ -206,8 +222,8 @@ class DeviceStore:
                     self._save()
                 return existing
             # A new key may ask for a name that is already taken, e.g. the background helper taking
-            # over from the Desktop app. It waits unapproved; approving it with its key replaces the
-            # old holder (approve()). Until then the old holder keeps the name.
+            # over from the Desktop app. It waits unapproved; approving it with its key adds it to the
+            # name beside the old holder (approve()).
             device = Device(device_id, name, public_key, now)
             self._devices[device_id] = device
             self._save()
@@ -370,6 +386,10 @@ class Talaria:
         device.last_seen = now
         device.platform = str(payload.get("platform") or "")[:40]
         device.shell = str(payload.get("shell") or "")[:40]
+        kind = payload.get("kind")
+        if kind in ("app", "helper") and kind != device.kind:
+            device.kind = kind
+            self.store.touch()
         abilities = payload.get("abilities")
         device.reports_abilities = isinstance(abilities, list)
         device.abilities = [str(a)[:20] for a in abilities[:8]] if device.reports_abilities else ["files"]
@@ -459,13 +479,15 @@ class Talaria:
     def describe_devices(self, now: Optional[float] = None) -> str:
         """Every approved device by its exact name, for an agent that got a name wrong."""
         now = self.clock() if now is None else now
-        names = [d.name + ("" if d.online(now) else " (offline)") for d in self.store.all() if d.approved]
+        online = {d.name for d in self.store.all() if d.online(now)}
+        names = [n + ("" if n in online else " (offline)")
+                 for n in dict.fromkeys(d.name for d in self.store.all() if d.approved)]
         return ("The user's devices are: " + ", ".join(names) + ". Use one of these names exactly."
                 if names else "The user has no approved devices.")
 
     def describe_online(self, now: Optional[float] = None) -> str:
         now = self.clock() if now is None else now
-        names = [d.name for d in self.store.all() if d.usable(now)]
+        names = list(dict.fromkeys(d.name for d in self.store.all() if d.usable(now)))
         return "Online devices: " + (", ".join(names) if names else "none") + "."
 
     def cancel_device(self, device_id: str) -> None:
@@ -492,7 +514,8 @@ class Talaria:
             raise TalariaError(f"{device.name} is offline. {self.describe_online()}")
         ability = ABILITY_OPS.get(op)
         if ability and ability not in device.abilities:
-            able = [d.name for d in self.store.all() if d.usable(self.clock()) and ability in d.abilities]
+            able = list(dict.fromkeys(d.name for d in self.store.all()
+                                      if d.usable(self.clock()) and ability in d.abilities))
             why = (f"{device.name} has the {ability} switched off. The user switches it on in Talaria's "
                    "settings in Hermes Desktop on that device."
                    if device.reports_abilities else
