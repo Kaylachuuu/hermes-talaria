@@ -565,7 +565,7 @@ async function helperAction(ctx, bridge, win, action, { home, server }) {
   if (result.exit_code !== 0) {
     const missing = /not recognized|not found/i.test(result.output)
     throw new Error(missing
-      ? 'Node 18 or later is needed. On Windows: winget install OpenJS.NodeJS.LTS. On a Mac: brew install node. Then restart Hermes Desktop.'
+      ? 'Node 18 or later is needed. On Windows: winget install OpenJS.NodeJS.LTS. On a Mac: the installer from nodejs.org (Homebrew can spend hours building it from source). Then restart Hermes Desktop.'
       : result.output.split('\n').slice(-4).join(' ') || `exit code ${result.exit_code}`)
   }
 
