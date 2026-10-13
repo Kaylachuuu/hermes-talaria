@@ -669,6 +669,48 @@ function HelperSection({ ctx, server, setServer, sync, win }) {
   })
 }
 
+// The status line, kept current; the approval command in it copies with a click.
+function StatusLine({ ctx, status }) {
+  const [text, setText] = useState(status)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    const timer = setInterval(() => setText(status()), 2000)
+
+    return () => clearInterval(timer)
+  }, [])
+
+  const match = /\/talaria approve \S+ \S+/.exec(text)
+
+  if (!match) {
+    return jsx('div', { className: HINT, children: text })
+  }
+
+  const copy = async () => {
+    const ok = await (ctx.os?.writeClipboard?.(match[0]) ??
+      globalThis.navigator?.clipboard?.writeText(match[0]).then(() => true))
+      .catch(() => false)
+    setCopied(Boolean(ok))
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return jsxs('div', {
+    className: HINT,
+    children: [
+      text.slice(0, match.index),
+      jsx('button', {
+        className: 'rounded border border-(--ui-border) px-1 font-mono hover:bg-(--ui-bg-hover)',
+        onClick: copy,
+        title: 'Copy',
+        type: 'button',
+        children: match[0]
+      }),
+      copied ? ' Copied.' : ' (click to copy)',
+      text.slice(match.index + match[0].length)
+    ]
+  })
+}
+
 function Settings({ ctx, status, sync }) {
   const win = isWindowsPlatform()
   const [useHelper, setUseHelper] = useState(() => ctx.storage.get('useHelper', true))
@@ -717,7 +759,7 @@ function Settings({ ctx, status, sync }) {
         ]
       }),
       useHelper ? jsx(HelperSection, { ctx, server, setServer, sync, win }) : null,
-      jsx('div', { className: HINT, children: status() })
+      jsx(StatusLine, { ctx, status })
     ]
   })
 }
