@@ -1,5 +1,7 @@
 # Talaria
 
+![Talaria: hands of Athena](docs/art/talaria-social.png)
+
 Hands for Hermes on the device in front of you. Athena runs on one server. When she lists, reads,
 writes or runs something, Talaria does it on a named device of yours (by default the one you are
 talking to her from) and never on the server.
