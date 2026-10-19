@@ -20,7 +20,7 @@
 //   talaria-helper login        sign in to the dashboard again
 //   talaria-helper folders [add <path> | remove <path>]
 //
-// Node 18 or later, and nothing else.
+// Node 22 or later (older versions are out of support, and the browser needs its built-in WebSocket), and nothing else.
 
 import { spawn, spawnSync } from 'node:child_process'
 import crypto from 'node:crypto'

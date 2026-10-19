@@ -20,7 +20,7 @@ One installable Hermes plugin, `talaria/`, with two halves:
 - **The device half** comes in two forms that speak the same protocol:
   - `talaria/desktop/plugin.js`, a stock Hermes Desktop plugin. It needs no modified app and does the
     work through the app's own native bridge, so the app has to be open.
-  - `helper/talaria-helper.mjs`, a background helper (Node 18 or later, no other dependencies). It
+  - `helper/talaria-helper.mjs`, a background helper (Node 22 or later, no other dependencies). It
     keeps the machine reachable with the app closed. When both run on one machine, the app hands
     the helper the chats it shows and stops doing the work itself (a switch in its settings).
 
@@ -90,7 +90,7 @@ talaria-helper folders add <path>    # or: remove <path>; read again within seco
   of allowed folders, used by the app and passed on to the helper within seconds. The helper's
   dashboard address defaults to the gateway Desktop is bound to (Settings > Gateway). **Install
   helper**, **Update helper** and **Remove helper** buttons run the commands below in the app's own
-  terminal (Node 18 or later must be installed), taking the helper from the dashboard so its
+  terminal (Node 22 or later must be installed), taking the helper from the dashboard so its
   version matches the server half. A sign-in box appears there when the helper is signed out. On
   a machine without Desktop, use `talaria-helper folders add <path>`.
 - **Local port.** It listens on 127.0.0.1:47219 for the Desktop app only (status, which chats are
