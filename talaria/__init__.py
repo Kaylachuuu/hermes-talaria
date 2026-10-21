@@ -133,6 +133,21 @@ def _image_result(device: str, result: dict):
             "content": [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]}
 
 
+def _said(op: str, device: str, result) -> dict:
+    """A sentence saying what happened, ahead of the data: her model read a bare {"written": true} as unfinished."""
+    if not isinstance(result, dict):
+        return {}
+    if op == "write" and result.get("written"):
+        return {"done": f"Done: {result.get('path')} is written on {device}. Nothing more is needed."}
+    if op == "run":
+        if result.get("timed_out"):
+            return {"done": f"The command ran on {device} and was stopped when its time ran out; its output so far is below."}
+        code = result.get("exit_code")
+        return {"done": f"The command finished on {device} with exit code {code}"
+                        + (" (success)." if code == 0 else " (an error).") + " Its output is below; it does not need running again."}
+    return {}
+
+
 def _error(message: str) -> str:
     return json.dumps({"error": message, "ran_on_server": False})
 
@@ -156,7 +171,7 @@ def _make_handler(op: str):
             result = talaria.dispatch(device, op, args, timeout)
             if isinstance(result, dict) and "image" in result:
                 return _image_result(device.name, result)
-            reply = {"device": device.name, "result": result}
+            reply = {**_said(op, device.name, result), "device": device.name, "result": result}
             if name and name.strip().lower() != device.name:
                 reply["note"] = f"There is no device named {name!r}; this ran on {device.name}."
             return json.dumps(reply)
