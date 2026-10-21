@@ -185,7 +185,8 @@ def test_helper_enrolls_waits_for_approval_and_does_the_work(hermes, helper):
     assert command(f"approve itest-helper {device.device_id[:8]}").startswith("Approved")
 
     allowed = helper["allowed"]
-    assert call("talaria_write", path=f"{allowed}/hi.txt", content="hello")["result"]["written"]
+    wrote = call("talaria_write", path=f"{allowed}/hi.txt", content="hello")
+    assert wrote["result"]["written"] and wrote["done"].startswith("Done:")
     assert call("talaria_read", path=f"{allowed}/hi.txt")["result"]["text"] == "hello"
     names = {e["name"] for e in call("talaria_list", path=str(allowed))["result"]["entries"]}
     assert {"hi.txt", "escape.txt"} <= names
