@@ -1,5 +1,5 @@
 name: talaria
-version: 0.3.1
+version: 0.4.0
 description: "Hands for Hermes on the device in front of you: list, read, write and run on a named device through the Talaria Desktop plugin."
 author: "Kaylachuuu"
 provides_tools:

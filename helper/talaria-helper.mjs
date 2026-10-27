@@ -11,6 +11,9 @@
 // 127.0.0.1) so "the device this conversation was last used from" still works, and stops doing the
 // work itself.
 //
+// With an Oikos address set (talaria-helper oikos ws://...), it also, or only, serves Athena on Oikos: the same key and
+// the same work over Oikos's own gateway (oikos/1), approved at Oikos's console instead of with /talaria approve.
+//
 //   talaria-helper setup        first-time setup: server, sign-in, name
 //   talaria-helper run          run in the foreground (what the background service runs)
 //   talaria-helper install      run it in the background at login, from a copy of this file
@@ -19,6 +22,7 @@
 //   talaria-helper status       is it running, and as which device
 //   talaria-helper login        sign in to the dashboard again
 //   talaria-helper folders [add <path> | remove <path>]
+//   talaria-helper oikos [<address> | off]   also serve Athena on Oikos, e.g. ws://10.0.0.8:11600
 //
 // Node 22 or later (older versions are out of support, and the browser needs its built-in WebSocket), and nothing else.
 
@@ -32,7 +36,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
-export const VERSION = '0.3.3'
+export const VERSION = '0.4.0'
 const PROTOCOL = 'talaria/1'
 const HELLO_EVERY_MS = 2_000
 const DEFAULT_LOCAL_PORT = 47219
@@ -1568,6 +1572,168 @@ export class Dashboard {
 
 // ------------------------------------------------------------------ the device loop
 
+// ------------------------------------------------------------------ Oikos
+
+const OIKOS_PROTOCOL = 'oikos/1'
+const OIKOS_PING_MS = 15_000
+const OIKOS_RETRY_MS = [2_000, 5_000, 10_000, 30_000]
+
+// The same key, on Oikos's own gateway (Oikos, design/hands-on-oikos.md): one WebSocket speaking oikos/1. It signs
+// in with this machine's key (asking to be enrolled the first time; Kayla approves it at Oikos's console), says what
+// it allows (device.offer), and answers device.request with a result signed for exactly that request. The work is
+// the same work, checked here against the same folders and switches; nothing trusts Oikos to have checked anything.
+export class OikosLink {
+  constructor(helper, { log = console.log, WebSocketImpl = globalThis.WebSocket } = {}) {
+    this.helper = helper
+    this.log = log
+    this.WebSocket = WebSocketImpl
+    this.status = 'Oikos: not connected yet.'
+    this.offered = ''
+    this.stopped = false
+  }
+
+  sign(kind, nonce, payload) {
+    const ts = Date.now()
+    const digest = crypto.createHash('sha256').update(payload, 'utf8').digest('hex')
+    const message = [OIKOS_PROTOCOL, kind, this.helper.identity.deviceId, String(ts), nonce, digest].join('\n')
+
+    return { signature: crypto.sign(null, Buffer.from(message, 'utf8'), this.helper.identity.key).toString('base64'), ts }
+  }
+
+  offer() {
+    return {
+      abilities: this.helper.abilities(),
+      platform: WIN ? 'windows' : process.platform,
+      roots: this.helper.roots().map(r => toNative(r)),
+      shell: this.helper.shell.name
+    }
+  }
+
+  // Resolves when the socket closes, with why.
+  connect() {
+    return new Promise(resolve => {
+      const ws = new this.WebSocket(this.helper.config.oikos)
+      const send = frame => ws.send(JSON.stringify(frame))
+      let next = 0
+      let ping = null
+      let why = 'closed'
+      const asked = new Map()
+      const call = (method, params) => new Promise((ok, fail) => {
+        const id = ++next
+        asked.set(id, { fail, ok })
+        send({ id, jsonrpc: '2.0', method, params })
+      })
+      const sendOffer = async () => {
+        const offer = this.offer()
+        const text = JSON.stringify(offer)
+
+        if (text !== this.offered) {
+          await call('device.offer', offer)
+          this.offered = text
+        }
+      }
+
+      ws.addEventListener('message', async event => {
+        let frame
+
+        try {
+          frame = JSON.parse(String(event.data))
+        } catch {
+          return
+        }
+
+        if (frame.method === undefined && asked.has(frame.id)) {
+          const { fail, ok } = asked.get(frame.id)
+          asked.delete(frame.id)
+          frame.error ? fail(Object.assign(new Error(frame.error.message), { reason: frame.error.data?.reason })) : ok(frame.result)
+
+          return
+        }
+
+        if (frame.method === 'event' && frame.params?.type === 'gateway.hello') {
+          const name = String(this.helper.config.name || '').trim().toLowerCase()
+          const { signature, ts } = this.sign('sign_in', frame.params.payload.challenge, '')
+
+          try {
+            const me = await call('gateway.sign_in', {
+              device_id: this.helper.identity.deviceId,
+              enroll: { name, public_key: this.helper.identity.publicKey, space: 'private' },
+              protocol: OIKOS_PROTOCOL,
+              signature,
+              ts
+            })
+            this.offered = ''
+            await sendOffer()
+            this.online = true
+            this.status = `Oikos: online as ${me.device} (${me.person}'s).`
+            this.log(this.status)
+            ping = setInterval(() => {
+              call('gateway.ping', {}).catch(() => {})
+              sendOffer().catch(() => {})
+            }, OIKOS_PING_MS)
+          } catch (error) {
+            why = error.reason === 'waiting_for_approval'
+              ? `waiting for approval as ${name} (key ${this.helper.identity.deviceId.slice(0, 8)}). At Oikos's console: devices.approve ${name} <person>`
+              : error.message
+            this.status = `Oikos: ${why}`
+          }
+
+          return
+        }
+
+        if (frame.method === 'device.request') {
+          this.answer(frame, send)
+        }
+      })
+      ws.addEventListener('close', event => {
+        clearInterval(ping)
+
+        for (const { fail } of asked.values()) {
+          fail(new Error('the connection closed'))
+        }
+
+        resolve(event.reason || why)
+      })
+      ws.addEventListener('error', () => {
+        why = `could not reach ${this.helper.config.oikos}`
+      })
+    })
+  }
+
+  async answer(frame, send) {
+    const { args = {}, digest, op, request_id: requestId } = frame.params || {}
+
+    try {
+      const result = await this.helper.work(op, args)
+      const resultText = JSON.stringify(result ?? null)
+      const nonce = crypto.randomBytes(12).toString('hex')
+      const { signature, ts } = this.sign('result', nonce, `${digest}\n${resultText}`)
+      this.log(`Oikos: ${op} done`)
+      send({ id: frame.id, jsonrpc: '2.0', result: { digest, nonce, result_text: resultText, signature, ts } })
+    } catch (error) {
+      this.log(`Oikos: ${op} refused: ${error?.message || error}`)
+      send({ error: { code: -32020, data: { reason: 'refused', request_id: requestId }, message: String(error?.message || error) }, id: frame.id, jsonrpc: '2.0' })
+    }
+  }
+
+  async run() {
+    let tries = 0
+
+    while (!this.stopped) {
+      this.online = false
+      const why = await this.connect()
+
+      if (!this.status.includes('waiting for approval')) {
+        this.status = `Oikos: disconnected (${why}).`
+      }
+
+      this.log(this.status)
+      tries = this.online ? 0 : tries + 1
+      await new Promise(resolve => setTimeout(resolve, OIKOS_RETRY_MS[Math.min(tries, OIKOS_RETRY_MS.length - 1)]))
+    }
+  }
+}
+
 export class Helper {
   constructor(home, { log = console.log, store = null } = {}) {
     this.home = home
@@ -1674,6 +1840,13 @@ export class Helper {
     return this.screen.perform(args)
   }
 
+  // One operation, checked here against this device's own folders and switches, whoever asked.
+  async work(op, args) {
+    return op === 'browser' ? await this.useBrowser(args)
+      : op === 'screen' ? await this.useScreen(args)
+        : await perform(op, args, this.roots(), { shell: this.shell })
+  }
+
   async handle(requestId) {
     if (this.inflight.has(requestId)) {
       return
@@ -1687,9 +1860,7 @@ export class Helper {
       let reply
 
       try {
-        const result = request.op === 'browser' ? await this.useBrowser(request.args || {})
-          : request.op === 'screen' ? await this.useScreen(request.args || {})
-            : await perform(request.op, request.args || {}, this.roots(), { shell: this.shell })
+        const result = await this.work(request.op, request.args || {})
         reply = { digest: request.digest, ok: true, request_id: requestId, result }
       } catch (error) {
         reply = { digest: request.digest, error: String(error?.message || error), ok: false, request_id: requestId }
@@ -1771,7 +1942,7 @@ export class Helper {
           home: this.home,
           key: this.identity.deviceId.slice(0, 8),
           name: this.config.name,
-          status: this.status,
+          status: !this.oikos ? this.status : this.config.server ? `${this.status} ${this.oikos.status}` : this.oikos.status,
           version: VERSION
         })
 
@@ -1839,6 +2010,16 @@ export class Helper {
   async run() {
     this.log(`Starting Talaria helper ${VERSION} (process ${process.pid}).`)
     this.serveLocal()
+
+    if (this.config.oikos) {
+      this.oikos = new OikosLink(this, { log: this.log })
+      this.oikos.run()
+
+      if (!this.config.server) {
+        return new Promise(() => {})
+      }
+    }
+
     let last = ''
 
     for (;;) {
@@ -2214,12 +2395,39 @@ function folders(helper, action, folder) {
   console.log(list.length ? list.join('\n') : 'No folders: nothing is allowed.')
 }
 
+// Oikos's gateway, beside the dashboard or instead of it. The background service picks it up when restarted.
+function oikos(helper, address) {
+  const config = helper.config
+
+  if (address === 'off') {
+    const { oikos: _, ...rest } = config
+    writeConfig(helper.home, rest)
+    console.log('Oikos: off. Restart the helper (talaria-helper install) for it to take effect.')
+
+    return
+  }
+
+  if (address) {
+    if (!/^wss?:\/\/[^\s/]+(\/\S*)?$/.test(address)) {
+      throw new Error(`not a WebSocket address: ${address} (e.g. ws://10.0.0.8:11600)`)
+    }
+
+    writeConfig(helper.home, { ...config, oikos: address })
+    console.log(`Oikos: ${address}. Restart the helper (talaria-helper install) for it to take effect; then approve ` +
+      `it at Oikos's console: devices.approve ${config.name || '<name>'} <person>`)
+
+    return
+  }
+
+  console.log(`Oikos: ${config.oikos || 'off'}`)
+}
+
 async function main(argv) {
   const [command = 'help', ...rest] = argv
   const home = helperHome()
 
   if (command === 'help' || command === '--help' || command === '-h') {
-    console.log(fs.readFileSync(scriptPath(), 'utf8').split('\n').slice(13, 21).map(l => l.replace(/^\/\/ ?/, '')).join('\n'))
+    console.log(fs.readFileSync(scriptPath(), 'utf8').split('\n').slice(16, 25).map(l => l.replace(/^\/\/ ?/, '')).join('\n'))
 
     return
   }
@@ -2245,6 +2453,8 @@ async function main(argv) {
       return status(helper)
     case 'folders':
       return folders(helper, rest[0], rest[1])
+    case 'oikos':
+      return oikos(helper, rest[0])
     default:
       throw new Error(`unknown command ${command}; try: talaria-helper help`)
   }

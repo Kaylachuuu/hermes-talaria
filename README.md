@@ -70,6 +70,7 @@ talaria-helper setup        # dashboard address, sign-in, device name
 talaria-helper install      # run in the background at every login
 talaria-helper status
 talaria-helper folders add <path>    # or: remove <path>; read again within seconds
+talaria-helper oikos <address>       # also serve Athena on Oikos (below)
 ```
 
 - **Sign-in.** It signs in once with the dashboard's username and password and keeps only the
@@ -115,6 +116,25 @@ spawns inherit its Talaria tools and its default device, and each Hermes profile
 the same device list and approvals (kept in the root Hermes home). Requests from different agents
 can run on one device at once; each command gets its own terminal. There is no per-agent limit yet,
 such as one agent allowed only one device.
+
+## On Oikos
+
+Athena is moving to Oikos (`Kaylachuuu/Oikos`), which runs her turns itself. There, her `talaria_*` tools are Oikos's
+own, by the same names and in the same shape (Oikos `code/oikos/hands.py`, `design/hands-on-oikos.md`), and the
+background helper reaches her through Oikos's gateway instead of the dashboard:
+
+```
+talaria-helper oikos ws://10.0.0.8:11600    # then restart it: talaria-helper install
+```
+
+- **The same key and the same work.** It signs in with this machine's key over Oikos's protocol (`oikos/1`), says
+  what it allows (`device.offer`: its folders, its shell, and whether the browser and the screen are on), and answers
+  each request with a result signed for exactly that request. Every path is checked here, as now.
+- **Approved at Oikos's console**, the first time: `devices.approve <name> <person>`. A device is reached only in a
+  conversation with its person.
+- **Beside the dashboard or instead of it.** With both a dashboard address and an Oikos address it serves both while
+  she is on both; `talaria-helper oikos off` stops serving Oikos. `talaria-helper status` shows each.
+- Hermes Desktop's own device half (the app without the helper) stays with Hermes.
 
 ## Browser and screen
 
