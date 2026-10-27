@@ -4,7 +4,7 @@ import crypto from 'node:crypto'
 import { test } from 'node:test'
 
 import {
-  Dashboard, Screen, allowedOrigin, applySettings, browserCandidates, envelope, installOptions, sendKeysFor, sendKeysText, webUrl, newIdentity, normalizePath, openIdentity, shellFor
+  Dashboard, OikosLink, Screen, allowedOrigin, applySettings, browserCandidates, envelope, installOptions, sendKeysFor, sendKeysText, webUrl, newIdentity, normalizePath, openIdentity, shellFor
 } from '../../../helper/talaria-helper.mjs'
 import {
   gatewayAddress, helperCall, helperCommand, helperPlan, probeHelper, readHelperToken
@@ -144,4 +144,63 @@ test('screen coordinates map from the screenshot back to the screen', () => {
   assert.equal(sendKeysFor('enter'), '{ENTER}')
   assert.equal(sendKeysFor('alt+F4'), '%{F4}')
   assert.equal(sendKeysText('50% (off) {x}+1'), '50{%} {(}off{)} {{}x{}}{+}1')
+})
+
+test('on Oikos the helper signs in with its key, says what it allows, and signs each result as written', async () => {
+  const identity = openIdentity(newIdentity())
+  const sent = []
+  let socket
+  class FakeSocket {
+    constructor (url) { this.url = url; this.on = {}; socket = this }
+    addEventListener (kind, fn) { this.on[kind] = fn }
+    send (text) { sent.push(JSON.parse(text)) }
+    close () { this.on.close({ reason: 'test' }) }
+  }
+  const helper = {
+    abilities: () => ['files'],
+    config: { name: 'macbook', oikos: 'ws://oikos:11600' },
+    identity,
+    roots: () => ['/Users/k/Notes'],
+    shell: { name: 'zsh' },
+    work: async (op, args) => ({ entries: [{ name: 'a.md', type: 'file' }], path: args.path, size: 1.5e-7 })
+  }
+  const link = new OikosLink(helper, { log: () => {}, WebSocketImpl: FakeSocket })
+  const closed = link.connect()
+  assert.equal(socket.url, 'ws://oikos:11600')
+  const said = data => socket.on.message({ data: JSON.stringify(data) })
+  const tick = () => new Promise(resolve => setTimeout(resolve, 10))
+  const raw = Buffer.from(identity.publicKey, 'base64')
+  const publicKey = crypto.createPublicKey({ format: 'der', key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]), type: 'spki' })
+  const verify = (kind, nonce, payload, ts, sig) => crypto.verify(null, Buffer.from(['oikos/1', kind, identity.deviceId, String(ts), nonce,
+    crypto.createHash('sha256').update(payload, 'utf8').digest('hex')].join('\n')), publicKey, Buffer.from(sig, 'base64'))
+
+  said({ jsonrpc: '2.0', method: 'event', params: { payload: { challenge: 'c'.repeat(32) }, type: 'gateway.hello' } })
+  await tick()
+  const signIn = sent.at(-1)
+  assert.equal(signIn.method, 'gateway.sign_in')
+  assert.deepEqual(signIn.params.enroll, { name: 'macbook', public_key: identity.publicKey, space: 'private' })
+  assert.ok(verify('sign_in', 'c'.repeat(32), '', signIn.params.ts, signIn.params.signature))
+  said({ id: signIn.id, jsonrpc: '2.0', result: { device: 'macbook', person: 'kayla' } })
+  await tick()
+  const offer = sent.at(-1)
+  assert.equal(offer.method, 'device.offer')
+  assert.deepEqual(offer.params.roots, ['/Users/k/Notes'])
+  said({ id: offer.id, jsonrpc: '2.0', result: { offered: true } })
+  await tick()
+  assert.match(link.status, /online as macbook \(kayla's\)/)
+
+  said({ id: 's1', jsonrpc: '2.0', method: 'device.request', params: { args: { path: '/Users/k/Notes' }, digest: 'd'.repeat(64), op: 'list', request_id: 'r1' } })
+  await tick()
+  const answer = sent.at(-1)
+  assert.equal(answer.id, 's1')
+  assert.equal(JSON.parse(answer.result.result_text).size, 1.5e-7)
+  assert.ok(verify('result', answer.result.nonce, `${'d'.repeat(64)}\n${answer.result.result_text}`, answer.result.ts, answer.result.signature))
+
+  helper.work = async () => { throw new Error('/etc is outside the allowed folders') }
+  said({ id: 's2', jsonrpc: '2.0', method: 'device.request', params: { args: { path: '/etc' }, digest: 'e'.repeat(64), op: 'list', request_id: 'r2' } })
+  await tick()
+  assert.equal(sent.at(-1).error.data.reason, 'refused')
+  assert.match(sent.at(-1).error.message, /outside the allowed folders/)
+  socket.close()
+  assert.equal(await closed, 'test')
 })
