@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -64,7 +65,9 @@ TOOLS = {
     "talaria_write": ("write", _LEAD + "Writes a text file (up to 1,000,000 characters). The folder "
                                        "must already exist. Overwrites an existing file.",
                       {"path": {"type": "string", "description": "Absolute file path on the device."},
-                       "content": {"type": "string"}, "device": _DEVICE},
+                       "content": {"type": "string", "description": "The text exactly as it should appear "
+                                   "in the file; don't add backslashes before quote marks."},
+                       "device": _DEVICE},
                       ["path", "content"]),
     "talaria_run": ("run", _LEAD + "Runs one command in the device's own shell and returns its output "
                                    "and exit code. The shell may be zsh or PowerShell, not Bash; "
@@ -133,6 +136,15 @@ def _image_result(device: str, result: dict):
             "content": [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]}
 
 
+def _unescape_quotes(content):
+    """Undo quote marks escaped one time too many: a model writing text inside a tool call can send
+    \\" for every ". Only when there is no plain " anywhere, so a file that really holds \\" (code,
+    JSON in a string) is left alone. Returns (content, whether it changed)."""
+    if isinstance(content, str) and '\\"' in content and not re.search(r'(?<!\\)"', content):
+        return content.replace('\\"', '"'), True
+    return content, False
+
+
 def _said(op: str, device: str, result) -> dict:
     """A sentence saying what happened, ahead of the data: her model read a bare {"written": true} as unfinished."""
     if not isinstance(result, dict):
@@ -168,10 +180,16 @@ def _make_handler(op: str):
                 args["timeout"] = timeout
             elif op in ("browser", "screen"):
                 timeout = 60
+            unescaped = False
+            if op == "write":
+                args["content"], unescaped = _unescape_quotes(args.get("content"))
             result = talaria.dispatch(device, op, args, timeout)
             if isinstance(result, dict) and "image" in result:
                 return _image_result(device.name, result)
             reply = {**_said(op, device.name, result), "device": device.name, "result": result}
+            if unescaped and "done" in reply:
+                reply["done"] += (' Every \\" in the content was written as a plain " (they looked '
+                                  'escaped one time too many).')
             if name and name.strip().lower() != device.name:
                 reply["note"] = f"There is no device named {name!r}; this ran on {device.name}."
             return json.dumps(reply)

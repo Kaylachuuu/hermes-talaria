@@ -14,3 +14,12 @@ def test_a_write_and_a_run_say_what_happened():
     assert "exit code 3 (an error)" in plugin._said("run", "anubis", {"exit_code": 3, "timed_out": False})["done"]
     assert "time ran out" in plugin._said("run", "anubis", {"exit_code": None, "timed_out": True})["done"]
     assert plugin._said("read", "anubis", {"text": "hi"}) == {} and plugin._said("run", "anubis", "odd") == {}
+
+
+def test_quotes_escaped_one_time_too_many_are_undone_only_when_nothing_else_is_quoted():
+    assert plugin._unescape_quotes('She said \\"hi\\".\nBye.') == ('She said "hi".\nBye.', True)
+    # A plain quote anywhere means the backslashes are meant (code, JSON inside a string).
+    code = 'print("a \\"b\\" c")'
+    assert plugin._unescape_quotes(code) == (code, False)
+    assert plugin._unescape_quotes("no quotes at all") == ("no quotes at all", False)
+    assert plugin._unescape_quotes(None) == (None, False)
